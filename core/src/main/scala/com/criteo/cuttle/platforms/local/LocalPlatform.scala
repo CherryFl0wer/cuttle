@@ -5,7 +5,6 @@ import java.nio.ByteBuffer
 import com.criteo.cuttle._
 import com.criteo.cuttle.platforms.ExecutionPool
 import com.zaxxer.nuprocess._
-import lol.http.PartialService
 
 import scala.collection.JavaConverters._
 import scala.concurrent.{Future, Promise}
@@ -24,9 +23,6 @@ case class LocalPlatform(maxForkedProcesses: Int) extends ExecutionPlatform {
 
   override def waiting: Set[Execution[_]] =
     pool.waiting
-
-  override lazy val publicRoutes: PartialService =
-    pool.routes("/api/platforms/local/pool")
 }
 
 /** Represent a process to be locally foked.

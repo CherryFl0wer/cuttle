@@ -2,10 +2,9 @@ package com.criteo.cuttle
 
 import java.time._
 import java.util.concurrent.TimeUnit
+
 import scala.concurrent.duration.{Duration => ScalaDuration}
-
 import scala.util._
-
 import doobie._
 import doobie.implicits._
 import doobie.hikari._
@@ -14,10 +13,10 @@ import io.circe.syntax._
 import io.circe.Json
 import io.circe.parser._
 import cats.data.NonEmptyList
+import cats.effect.Resource.Allocate
 import cats.implicits._
 import cats.effect.{IO, Resource}
 import doobie.util.log
-
 import com.criteo.cuttle.events.{Event, JobSuccessForced}
 
 /** Configuration of JDBC endpoint.
@@ -100,7 +99,7 @@ private[cuttle] object Database {
       ) ENGINE = INNODB;
     """.update.run,
     sql"""
-      ALTER TABLE paused_jobs ADD COLUMN user VARCHAR(256) NOT NULL DEFAULT 'not defined user', ADD COLUMN date DATETIME NOT NULL DEFAULT '1991-11-01:15:42:00'
+      ALTER TABLE paused_jobs ADD COLUMN date DATETIME NOT NULL DEFAULT '1991-11-01:15:42:00'
     """.update.run,
     sql"""
       ALTER TABLE executions_streams ADD PRIMARY KEY(id)
@@ -108,7 +107,6 @@ private[cuttle] object Database {
     sql"""
       CREATE TABLE events (
         created      DATETIME NOT NULL,
-        user         VARCHAR(256),
         kind         VARCHAR(100),
         job_id       VARCHAR(1000),
         execution_id CHAR(36),
@@ -210,7 +208,9 @@ private[cuttle] object Database {
 
   def connect(dbConfig: DatabaseConfig)(implicit logger: Logger): XA = {
     // FIXME we shouldn't use allocated as it's unsafe instead we have to flatMap on the Resource[HikariTransactor]
-    val (transactor, releaseIO) = newHikariTransactor(dbConfig).allocated.unsafeRunSync
+    val hirakiTransactor = newHikariTransactor(dbConfig)
+
+    val (transactor, releaseIO) =
     logger.debug("Allocated new Hikari transactor")
     connections.getOrElseUpdate(
       dbConfig, {
@@ -338,13 +338,13 @@ private[cuttle] case class Queries(logger: Logger) {
     """.update.run
 
   private[cuttle] def pauseJobQuery[S <: Scheduling](pausedJob: PausedJob) = sql"""
-      INSERT INTO paused_jobs VALUES (${pausedJob.id}, ${pausedJob.user}, ${pausedJob.date})
+      INSERT INTO paused_jobs VALUES (${pausedJob.id}, ${pausedJob.date})
     """.update
 
   def pauseJob(pausedJob: PausedJob): ConnectionIO[Int] =
     resumeJob(pausedJob.id) *> pauseJobQuery(pausedJob).run
 
-  private[cuttle] val getPausedJobIdsQuery = sql"SELECT id, user, date FROM paused_jobs".query[PausedJob]
+  private[cuttle] val getPausedJobIdsQuery = sql"SELECT id, date FROM paused_jobs".query[PausedJob]
 
   def getPausedJobs: ConnectionIO[Seq[PausedJob]] = getPausedJobIdsQuery.to[Seq]
 
@@ -389,9 +389,9 @@ private[cuttle] case class Queries(logger: Logger) {
   def logEvent(e: Event): ConnectionIO[Int] = {
     val payload = e.asJson
     val query: Update0 = e match {
-      case JobSuccessForced(date, user, job, start, end) =>
-        sql"""INSERT INTO events (created, user, kind, job_id, start_time, end_time, payload)
-              VALUES (${date}, ${user.userId}, ${e.getClass.getSimpleName}, ${job}, ${start}, ${end}, ${payload})""".update
+      case JobSuccessForced(date, job, start, end) =>
+        sql"""INSERT INTO events (created, kind, job_id, start_time, end_time, payload)
+              VALUES (${date},  ${e.getClass.getSimpleName}, ${job}, ${start}, ${end}, ${payload})""".update
     }
     query.run
   }

@@ -6,7 +6,6 @@ val VERSION = "0.9.2"
 lazy val catsCore = "1.5.0"
 lazy val circe = "0.10.1"
 lazy val doobie = "0.6.0"
-lazy val lolhttp = "0.12.0"
 
 lazy val commonSettings = Seq(
   organization := "com.criteo.cuttle",
@@ -166,7 +165,6 @@ lazy val localdb = {
   (project in file("localdb"))
     .settings(commonSettings: _*)
     .settings(
-      publishArtifact := false,
       libraryDependencies ++= Seq(
         "ch.vorburger.mariaDB4j" % "mariaDB4j" % "2.3.0"
       )
@@ -179,11 +177,6 @@ lazy val cuttle =
     .settings(commonSettings: _*)
     .settings(Defaults.itSettings: _*)
     .settings(
-      libraryDependencies ++= Seq(
-        "com.criteo.lolhttp" %% "lolhttp",
-        "com.criteo.lolhttp" %% "loljson",
-        "com.criteo.lolhttp" %% "lolhtml"
-      ).map(_ % lolhttp),
       libraryDependencies ++= Seq("core", "generic", "parser", "java8")
         .map(module => "io.circe" %% s"circe-$module" % circe),
       libraryDependencies ++= Seq(
@@ -272,7 +265,6 @@ lazy val examples =
         "ch.vorburger.mariaDB4j" % "mariaDB4j" % "2.3.0" % "test"
       ))
     .settings(
-      publishArtifact := false,
       fork in Test := true,
       connectInput in Test := true,
       javaOptions ++= Seq("-Xmx256m", "-XX:+HeapDumpOnOutOfMemoryError"),
@@ -297,7 +289,6 @@ lazy val root =
     .enablePlugins(ScalaUnidocPlugin)
     .settings(commonSettings: _*)
     .settings(
-      publishArtifact := false,
       scalacOptions in (ScalaUnidoc, unidoc) ++= Seq(
         Seq(
           "-sourcepath",
@@ -325,8 +316,6 @@ lazy val root =
                 jar -> url("https://www.scala-lang.org/api/current/")
               case (jar, module) if module.name.contains("doobie") =>
                 jar -> url("https://www.javadoc.io/doc/org.tpolecat/doobie-core_2.12/0.4.1/")
-              case (jar, module) if module.name.contains("lolhttp") =>
-                jar -> url("https://criteo.github.io/lolhttp/api/")
               case (jar, module) if module.name.contains("circe") =>
                 jar -> url("http://circe.github.io/circe/api/")
             }

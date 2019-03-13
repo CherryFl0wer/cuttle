@@ -20,8 +20,6 @@ import doobie.util.fragment.Fragment
 import io.circe._
 import io.circe.java8.time._
 import io.circe.syntax._
-import lol.http.PartialService
-import com.criteo.cuttle.Auth._
 import com.criteo.cuttle.ExecutionStatus._
 import com.criteo.cuttle.ThreadPools.{SideEffectThreadPool, _}
 import com.criteo.cuttle.Metrics._
@@ -173,20 +171,18 @@ class CancellationListener private[cuttle] (execution: Execution[_], private[cut
 }
 
 private[cuttle] case class PausedJobWithExecutions[S <: Scheduling](id: String,
-                                                                    user: User,
                                                                     date: Instant,
                                                                     executions: Map[Execution[S], Promise[Completed]]) {
-  def toPausedJob(): PausedJob = PausedJob(id, user, date)
+  def toPausedJob(): PausedJob = PausedJob(id, date)
 }
 
-private[cuttle] case class PausedJob(id: String, user: User, date: Instant) {
+private[cuttle] case class PausedJob(id: String, date: Instant) {
   def toPausedJobWithExecutions[S <: Scheduling](): PausedJobWithExecutions[S] =
-    PausedJobWithExecutions(id, user, date, Map.empty[Execution[S], Promise[Completed]])
+    PausedJobWithExecutions(id, date, Map.empty[Execution[S], Promise[Completed]])
 }
 
 private[cuttle] object PausedJob {
   import io.circe.generic.semiauto._
-  implicit val encodeUser: Encoder[User] = deriveEncoder
   implicit val encodePausedJob: Encoder[PausedJob] = deriveEncoder
 }
 
@@ -253,9 +249,8 @@ case class Execution[S <: Scheduling](
     * if it handles cancellation properly. Note that the provided [[ExecutionPlatform ExecutionPlatforms]] handle cancellation properly, so
     * for [[SideEffect]] that use the provided platforms they support cancellation out of the box.
     *
-    * @param user The user who asked for the cancellation (either from the UI or the private API).
     */
-  def cancel()(implicit user: User): Boolean = {
+  def cancel(): Boolean = {
     val (hasBeenCancelled, listeners) = atomic { implicit txn =>
       if (cancelled()) {
         (false, Nil)
@@ -267,19 +262,18 @@ case class Execution[S <: Scheduling](
       }
     }
     if (hasBeenCancelled) {
-      streams.debug(s"Execution has been cancelled by user ${user.userId}.")
       listeners.foreach(listener => Try(listener.thunk()))
     }
     hasBeenCancelled
   }
 
-  def forceSuccess()(implicit user: User): Unit =
+  def forceSuccess(): Unit =
     if (!atomic { implicit txn =>
           forcedSuccess.getAndTransform(_ => true)
         }) {
       streams.debug(
         s"""Possible execution failures will be ignored and final execution status will be marked as success.
-                       |Change initiated by user ${user.userId} at ${Instant.now().toString}.""".stripMargin)
+                       |Change initiated at ${Instant.now().toString}.""".stripMargin)
     }
 
   private[cuttle] def toExecutionLog(status: ExecutionStatus, failing: Option[FailingJob] = None) =
@@ -380,12 +374,6 @@ private[cuttle] object Execution {
 
 /** An [[ExecutionPlatform]] provides controlled access to shared resources. */
 trait ExecutionPlatform {
-
-  /** Expose a public `lolhttp` service for the platform internal statistics (for the UI and API). */
-  def publicRoutes: PartialService = PartialFunction.empty
-
-  /** Expose a private `lolhttp` service for the platform operations (for the UI and API). */
-  def privateRoutes: AuthenticatedService = PartialFunction.empty
 
   /** @return the list of [[Execution]] waiting for resources on this platform.
     * These executions will be seen as __WAITING__ in the UI and the API. */
@@ -608,7 +596,7 @@ class Executor[S <: Scheduling] private[cuttle] (
                                             xa: XA): IO[Seq[ExecutionLog]] =
     queries.getRawExecutionLog(jobs, sort, asc, offset, limit).transact(xa)
 
-  private[cuttle] def cancelExecution(executionId: String)(implicit user: User): Unit = {
+  private[cuttle] def cancelExecution(executionId: String): Unit = {
     val toCancel = atomic { implicit tx =>
       (runningState.keys ++ throttledState.keys)
         .find(_.id == executionId)
@@ -633,7 +621,7 @@ class Executor[S <: Scheduling] private[cuttle] (
   private[cuttle] def openStreams(executionId: String): fs2.Stream[IO, Byte] =
     ExecutionStreams.getStreams(executionId, queries, xa)
 
-  private[cuttle] def relaunch(jobs: Set[String])(implicit user: User): Unit = {
+  private[cuttle] def relaunch(jobs: Set[String]): Unit = {
     val execution2Promise = atomic { implicit txn =>
       throttledState.collect {
         case (execution, (promise, _)) if jobs.contains(execution.job.id) =>
@@ -645,12 +633,12 @@ class Executor[S <: Scheduling] private[cuttle] (
 
     execution2Promise.foreach {
       case (execution, promise) =>
-        execution.streams.debug(s"Job has been relaunched by user ${user.userId}.")
+        execution.streams.debug(s"Job has been relaunched .")
         unsafeDoRun(execution, promise)
     }
   }
 
-  private[cuttle] def forceSuccess(executionId: String)(implicit user: User): Unit = {
+  private[cuttle] def forceSuccess(executionId: String): Unit = {
     val toForce = atomic { implicit tx =>
       (runningState.keys ++ throttledState.keys)
         .find(execution => execution.id == executionId)
@@ -658,7 +646,7 @@ class Executor[S <: Scheduling] private[cuttle] (
     toForce.foreach(_.forceSuccess())
   }
 
-  private[cuttle] def gracefulShutdown(timeout: scala.concurrent.duration.Duration)(implicit user: User): Unit = {
+  private[cuttle] def gracefulShutdown(timeout: scala.concurrent.duration.Duration): Unit = {
 
     import utils._
 

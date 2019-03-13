@@ -3,10 +3,6 @@ package com.criteo.cuttle.platforms
 import com.criteo.cuttle._
 
 import java.time._
-
-import lol.http._
-import lol.json._
-
 import scala.concurrent._
 import scala.concurrent.stm._
 import scala.collection.SortedSet
@@ -103,24 +99,5 @@ trait WaitingExecutionQueue {
             runNext()
         }
     }
-  }
-
-  def routes(urlPrefix: String): PartialService = {
-    case req if req.url == s"$urlPrefix/running" =>
-      Ok(this._running.single.get.toSeq.map {
-        case (execution, task) =>
-          Json.obj(
-            "execution" -> execution.toExecutionLog(ExecutionStatus.ExecutionRunning).asJson,
-            "task" -> task.asJson
-          )
-      }.asJson)
-    case req if req.url == s"$urlPrefix/waiting" =>
-      Ok(this._waiting.single.get.toSeq.map {
-        case (execution, task) =>
-          Json.obj(
-            "execution" -> execution.toExecutionLog(ExecutionStatus.ExecutionWaiting).asJson,
-            "task" -> task.asJson
-          )
-      }.asJson)
   }
 }

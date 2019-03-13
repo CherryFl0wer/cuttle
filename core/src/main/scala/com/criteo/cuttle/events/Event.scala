@@ -2,7 +2,6 @@ package com.criteo.cuttle.events
 
 import java.time.Instant
 
-import com.criteo.cuttle.Auth.User
 import io.circe.{Decoder, Encoder}
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.java8.time._
@@ -12,7 +11,6 @@ sealed trait Event {
 }
 
 case class JobSuccessForced(created: Instant,
-                            createdBy: User,
                             jobId: String,
                             intervalStart: Instant,
                             intervalEnd: Instant)
