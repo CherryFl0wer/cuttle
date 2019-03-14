@@ -150,7 +150,7 @@ class TimeSeriesSpec extends FunSuite with TestScheduling {
                        jobStates,
                        start = date"2117-03-25T02:00:00Z",
                        end = date"2117-03-25T07:00:00Z",
-                       priority = 0)(Auth.User("test_user_id"))
+                       priority = 0)
       .sortBy(_.start)
 
     assert(backfills.size === 3)

@@ -192,7 +192,6 @@ private[timeseries] object TimeSeriesCalendarView {
   *                 the day to day workload.
   * @param description Description (for audit logs).
   * @param status Status of the backfill.
-  * @param createdBy User who created the backfill (for audit logs).
   */
 case class Backfill(id: String,
                     start: Instant,
@@ -201,8 +200,7 @@ case class Backfill(id: String,
                     priority: Int,
                     name: String,
                     description: String,
-                    status: String,
-                    createdBy: String)
+                    status: String)
 
 private[timeseries] object Backfill {
   implicit val eqInstance: Eq[Backfill] = Eq.fromUniversalEquals[Backfill]
@@ -224,8 +222,7 @@ private[timeseries] object Backfill {
           name <- c.downField("name").as[String]
           description <- c.downField("description").as[String]
           status <- c.downField("status").as[String]
-          createdBy <- c.downField("createdBy").as[String]
-        } yield Backfill(id, start, end, jobs, priority, name, description, status, createdBy)
+        } yield Backfill(id, start, end, jobs, priority, name, description, status)
     }
 }
 
@@ -502,7 +499,7 @@ case class TimeSeriesScheduler(logger: Logger,
                                       end: Instant,
                                       priority: Int,
                                       runningExecutions: TMap[Execution[TimeSeries], Future[Completed]],
-                                      xa: XA)(implicit user: Auth.User): IO[Either[String, Unit]] = {
+                                      xa: XA): IO[Either[String, Unit]] = {
 
     logger.debug(s"Requesting a backfill of ${jobs.map(_.id)} between $start and $end")
 
@@ -545,7 +542,7 @@ case class TimeSeriesScheduler(logger: Logger,
                                           states: Map[TimeSeriesUtils.TimeSeriesJob, IntervalMap[Instant, JobState]],
                                           start: Instant,
                                           end: Instant,
-                                          priority: Int)(implicit user: Auth.User): List[Backfill] = {
+                                          priority: Int): List[Backfill] = {
     type TimeInterval = (Instant, Instant)
 
     val queryInterval = Interval(start, end)
@@ -618,23 +615,20 @@ case class TimeSeriesScheduler(logger: Logger,
           priority,
           name,
           description,
-          "RUNNING",
-          user.userId
+          "RUNNING"
         )
     }
 
     backfills
   }
 
-  private[timeseries] def pauseJobs(jobs: Set[Job[TimeSeries]], executor: Executor[TimeSeries], xa: XA)(
-    implicit user: Auth.User
-  ): Unit = {
+  private[timeseries] def pauseJobs(jobs: Set[Job[TimeSeries]], executor: Executor[TimeSeries], xa: XA): Unit = {
     val executionsToCancel = atomic { implicit tx =>
       val pauseDate = Instant.now()
       val pausedJobIds = _pausedJobs().map(_.id)
       val jobsToPause: Set[PausedJob] = jobs
         .filter(job => !pausedJobIds.contains(job.id))
-        .map(job => PausedJob(job.id, user, pauseDate))
+        .map(job => PausedJob(job.id, pauseDate))
 
       if (jobsToPause.isEmpty) return
 
@@ -656,12 +650,12 @@ case class TimeSeriesScheduler(logger: Logger,
     }
     logger.debug(s"we will cancel ${executionsToCancel.size} executions")
     executionsToCancel.toList.sortBy(_.context).reverse.foreach { execution =>
-      execution.streams.debug(s"Job has been paused by user ${user.userId}")
+      execution.streams.debug(s"Job has been paused")
       execution.cancel()
     }
   }
 
-  private[timeseries] def resumeJobs(jobs: Set[Job[TimeSeries]], xa: XA)(implicit user: Auth.User): Unit = {
+  private[timeseries] def resumeJobs(jobs: Set[Job[TimeSeries]], xa: XA): Unit = {
     val jobIdsToResume = jobs.map(_.id)
     val resumeQuery = jobIdsToResume.map(queries.resumeJob).reduceLeft(_ *> _)
 
@@ -778,12 +772,12 @@ case class TimeSeriesScheduler(logger: Logger,
       .queryBackfills(Some(sql"""status = 'RUNNING'"""))
       .to[List]
       .map(_.map {
-        case (id, name, description, jobsIdsString, priority, start, end, _, status, createdBy) =>
+        case (id, name, description, jobsIdsString, priority, start, end, _, status) =>
           val jobsIds = jobsIdsString.split(",")
           val jobs = workflow.vertices.filter { job =>
             jobsIds.contains(job.id)
           }
-          Backfill(id, start, end, jobs, priority, name, description, status, createdBy)
+          Backfill(id, start, end, jobs, priority, name, description, status)
       })
       .transact(xa)
       .unsafeRunSync

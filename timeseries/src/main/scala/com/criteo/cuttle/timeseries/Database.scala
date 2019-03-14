@@ -77,7 +77,6 @@ private[timeseries] object Database {
         start       DATETIME NOT NULL,
         end         DATETIME NOT NULL,
         created_at  DATETIME NOT NULL,
-        created_by VARCHAR(100) NOT NULL,
         status      VARCHAR(100) NOT NULL,
         PRIMARY KEY (id)
       ) ENGINE = INNODB;
@@ -173,23 +172,23 @@ private[timeseries] object Database {
 
   def queryBackfills(where: Option[Fragment] = None) = {
     val select =
-      sql"""SELECT id, name, description, jobs, priority, start, end, created_at, status, created_by
+      sql"""SELECT id, name, description, jobs, priority, start, end, created_at, status
             FROM timeseries_backfills"""
     where
       .map(select ++ sql" WHERE " ++ _)
       .getOrElse(select)
-      .query[(String, String, String, String, Int, Instant, Instant, Instant, String, String)]
+      .query[(String, String, String, String, Int, Instant, Instant, Instant, String)]
   }
 
   def getBackfillById(id: String): ConnectionIO[Option[Json]] = {
     val select =
-      sql"""SELECT id, name, description, jobs, priority, start, end, created_at, status, created_by
+      sql"""SELECT id, name, description, jobs, priority, start, end, created_at, status
             FROM timeseries_backfills WHERE id=$id"""
     select
-      .query[(String, String, String, String, Int, Instant, Instant, Instant, String, String)]
+      .query[(String, String, String, String, Int, Instant, Instant, Instant, String)]
       .option
       .map(_.map {
-        case (id, name, description, jobs, priority, start, end, created_at, status, created_by) =>
+        case (id, name, description, jobs, priority, start, end, created_at, status) =>
           Json.obj(
             "id" -> id.asJson,
             "name" -> name.asJson,
@@ -199,8 +198,7 @@ private[timeseries] object Database {
             "start" -> start.asJson,
             "end" -> end.asJson,
             "created_at" -> created_at.asJson,
-            "status" -> status.asJson,
-            "created_by" -> created_by.asJson
+            "status" -> status.asJson
           )
       })
   }
@@ -222,7 +220,7 @@ private[timeseries] object Database {
       })
 
   def createBackfill(backfill: Backfill) =
-    sql"""INSERT INTO timeseries_backfills (id, name, description, jobs, priority, start, end, created_at, status, created_by)
+    sql"""INSERT INTO timeseries_backfills (id, name, description, jobs, priority, start, end, created_at, status)
           VALUES (${backfill.id},
                   ${backfill.name},
                   ${backfill.description},
@@ -231,8 +229,7 @@ private[timeseries] object Database {
                   ${backfill.start},
                   ${backfill.end},
                   ${Instant.now()},
-                  ${backfill.status},
-                  ${backfill.createdBy}
+                  ${backfill.status}
                  )""".update.run
 
   def setBackfillStatus(ids: Set[String], status: String) =

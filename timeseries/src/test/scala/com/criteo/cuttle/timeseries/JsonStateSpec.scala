@@ -34,8 +34,7 @@ class JsonStateSpec extends FunSuite with TestScheduling {
     0,
     "lol",
     "",
-    "RUNNING",
-    "Guest"
+    "RUNNING"
   )
 
   implicit val backfills = List(backfill)

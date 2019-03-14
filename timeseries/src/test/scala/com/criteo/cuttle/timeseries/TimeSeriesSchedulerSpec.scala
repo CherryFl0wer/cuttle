@@ -6,7 +6,6 @@ import scala.concurrent.Future
 
 import org.scalatest.FunSuite
 
-import com.criteo.cuttle.Auth
 import com.criteo.cuttle.{Completed, Job, TestScheduling}
 import com.criteo.cuttle.timeseries.JobState.{Done, Todo}
 import com.criteo.cuttle.timeseries.TimeSeriesUtils.State
@@ -20,7 +19,6 @@ class TimeSeriesSchedulerSpec extends FunSuite with TestScheduling {
   private val parentScheduling: TimeSeries = hourly(date"2017-03-25T01:00:00Z")
   private val parentTestJob = Job("parent_test_job", parentScheduling)(completed)
   private val scheduler = TimeSeriesScheduler(logger)
-  implicit val toto = Auth.User("toto")
 
   private val backfill = Backfill("some-id",
                                   date"2017-03-25T01:00:00Z",
@@ -29,8 +27,7 @@ class TimeSeriesSchedulerSpec extends FunSuite with TestScheduling {
                                   priority = 0,
                                   name = "backfill",
                                   description = "",
-                                  status = "RUNNING",
-                                  createdBy = "")
+                                  status = "RUNNING")
 
   test("identity new backfills") {
     val state: State = Map(

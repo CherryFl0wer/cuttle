@@ -1,6 +1,5 @@
 package com.criteo.cuttle.timeseries
 
-import lol.http._
 
 import com.criteo.cuttle._
 import com.criteo.cuttle.{Database => CuttleDatabase}
@@ -16,7 +15,6 @@ class CuttleProject private[cuttle] (val name: String,
                                      val description: String,
                                      val env: (String, Boolean),
                                      val jobs: Workflow,
-                                     val authenticator: Auth.Authenticator,
                                      val logger: Logger) {
 
   /**
@@ -42,18 +40,12 @@ class CuttleProject private[cuttle] (val name: String,
     logsRetention: Option[Duration] = None,
     maxVersionsHistory: Option[Int] = None
   ): Unit = {
-    val (routes, startScheduler) =
+    val (app, startScheduler) =
       build(platforms, databaseConfig, retryStrategy, paused, stateRetention, logsRetention, maxVersionsHistory)
 
-    startScheduler()
-
-    logger.info("Start server")
-    Server.listen(port = httpPort, onError = { e =>
-      e.printStackTrace()
-      InternalServerError(e.getMessage)
-    })(routes)
-
-    logger.info(s"Listening on http://localhost:$httpPort")
+    logger.info(s"Running cuttle timeseries graph")
+    // $app was suppose to contain routes doing specific action on jobs timeseries
+    // keep it like that for now might change in the future
   }
 
   /**
@@ -77,7 +69,7 @@ class CuttleProject private[cuttle] (val name: String,
     stateRetention: Option[Duration] = None,
     logsRetention: Option[Duration] = None,
     maxVersionsHistory: Option[Int] = None
-  ): (Service, () => Unit) = {
+  ): (TimeSeriesApp, () => Unit) = {
     val xa = CuttleDatabase.connect(databaseConfig)(logger)
     val executor = new Executor[TimeSeries](platforms, xa, logger, name, version, logsRetention)(retryStrategy)
     val scheduler = new TimeSeriesScheduler(logger, stateRetention, maxVersionsHistory)
@@ -85,13 +77,13 @@ class CuttleProject private[cuttle] (val name: String,
     val startScheduler = () => {
       if (paused) {
         logger.info("Pausing workflow")
-        scheduler.pauseJobs(jobs.all, executor, xa)(Auth.User("Startup"))
+        scheduler.pauseJobs(jobs.all, executor, xa)
       }
       logger.info("Start workflow")
       scheduler.start(jobs, executor, xa, logger)
     }
 
-    (TimeSeriesApp(this, executor, scheduler, xa).routes, startScheduler)
+    (TimeSeriesApp(this, executor, scheduler, xa), startScheduler)
   }
 }
 
@@ -115,25 +107,16 @@ object CuttleProject {
     name: String,
     version: String = "",
     description: String = "",
-    env: (String, Boolean) = ("", false),
-    authenticator: Auth.Authenticator = Auth.GuestAuth
+    env: (String, Boolean) = ("", false)
   )(jobs: Workflow)(implicit logger: Logger): CuttleProject =
-    new CuttleProject(name, version, description, env, jobs, authenticator, logger)
+    new CuttleProject(name, version, description, env, jobs, logger)
 
   private[CuttleProject] def defaultPlatforms: Seq[ExecutionPlatform] = {
-    import java.util.concurrent.TimeUnit.SECONDS
-
     import platforms._
 
     Seq(
       local.LocalPlatform(
         maxForkedProcesses = 10
-      ),
-      http.HttpPlatform(
-        maxConcurrentRequests = 10,
-        rateLimits = Seq(
-          ".*" -> http.HttpPlatform.RateLimit(1, per = SECONDS)
-        )
       )
     )
   }

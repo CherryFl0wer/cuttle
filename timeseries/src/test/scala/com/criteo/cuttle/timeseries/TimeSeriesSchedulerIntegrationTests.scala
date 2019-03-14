@@ -11,7 +11,7 @@ import ch.vorburger.mariadb4j._
 
 import com.criteo.cuttle.platforms.local._
 import com.criteo.cuttle.timeseries.TimeSeriesUtils.{Run, TimeSeriesJob}
-import com.criteo.cuttle.{Auth, Database => CuttleDatabase, _}
+import com.criteo.cuttle.{ Database => CuttleDatabase, _}
 import Utils.logger
 
 object TimeSeriesSchedulerIntegrationTests {
@@ -58,18 +58,17 @@ object TimeSeriesSchedulerIntegrationTests {
     assert(runningExecutionsToJobIdAndResult(runningExecutions).equals(Set(("child-job", false))))
 
     logger.info("'child-job' is paused")
-    val guestUser = Auth.User("Guest")
-    scheduler.pauseJobs(Set(Jobs.childJob), executor, xa)(guestUser)
+    scheduler.pauseJobs(Set(Jobs.childJob), executor, xa)
     assert(
       (scheduler
         .pausedJobs()
-        .map { case PausedJob(jobId, user, date) => (jobId, user) })
-        .equals(Set(("child-job", guestUser))))
+        .map { case PausedJob(jobId, date) => jobId })
+        .equals("child-job"))
     runningExecutions = doSynchronousExecutionStep(scheduler, runningExecutions, project.jobs, executor, xa)
     assert(runningExecutions.isEmpty)
 
     logger.info("'child-job' is resumed")
-    scheduler.resumeJobs(Set(Jobs.childJob), xa)(guestUser)
+    scheduler.resumeJobs(Set(Jobs.childJob), xa)
     assert(scheduler.pausedJobs().isEmpty)
     runningExecutions = doSynchronousExecutionStep(scheduler, runningExecutions, project.jobs, executor, xa)
     assert(runningExecutionsToJobIdAndResult(runningExecutions).equals(Set(("child-job", true))))
