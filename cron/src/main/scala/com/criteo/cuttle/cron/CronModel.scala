@@ -12,7 +12,6 @@ import io.circe._
 import io.circe.syntax._
 import io.circe.java8.time._
 
-import com.criteo.cuttle.Auth.User
 import com.criteo.cuttle.{ExecutionStatus, Logger, PausedJob, Scheduling, SchedulingContext, Workload}
 
 private[cron] case class ScheduledAt(instant: Instant, delay: FiniteDuration)
@@ -53,7 +52,7 @@ private[cron] case class CronState(logger: Logger) {
     executions() = executions() - job
   }
 
-  private[cron] def pauseJobs(jobs: Set[CronJob])(implicit user: User): Set[PausedJob] = {
+  private[cron] def pauseJobs(jobs: Set[CronJob]): Set[PausedJob] = {
     val pauseDate = Instant.now()
     atomic { implicit txn =>
       val jobsToPause = jobs
@@ -61,7 +60,7 @@ private[cron] case class CronState(logger: Logger) {
         .toSeq
 
       jobsToPause.foreach(removeJobFromState)
-      val justPausedJobs = jobsToPause.map(job => PausedJob(job.id, user, pauseDate))
+      val justPausedJobs = jobsToPause.map(job => PausedJob(job.id, pauseDate))
       paused() = paused() ++ jobsToPause.zip(justPausedJobs)
 
       justPausedJobs.toSet

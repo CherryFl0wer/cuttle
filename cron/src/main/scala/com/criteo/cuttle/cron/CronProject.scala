@@ -2,14 +2,12 @@ package com.criteo.cuttle.cron
 
 import scala.concurrent.duration._
 
-import lol.http._
 import io.circe.{Encoder, Json}
 import io.circe.syntax._
 
 import com.criteo.cuttle._
 import com.criteo.cuttle.ThreadPools._
 import com.criteo.cuttle.ThreadPools.Implicits.serverThreadPool
-import com.criteo.cuttle.Auth.Authenticator
 
 /**
   * A cuttle project is a workflow to execute with the appropriate scheduler.
@@ -21,12 +19,10 @@ class CronProject private[cuttle] (val name: String,
                                    val env: (String, Boolean),
                                    val workload: Workload[CronScheduling],
                                    val scheduler: CronScheduler,
-                                   val authenticator: Authenticator,
                                    val logger: Logger) {
 
   /**
-    * Start scheduling and execution with the given environment. It also starts
-    * an HTTP server providing an Web UI and a JSON API.
+    * Start scheduling and execution with the given environment
     *
     * @param platforms      The configured [[ExecutionPlatform ExecutionPlatforms]] to use to execute jobs.
     * @param port           The port to use for the HTTP daemon.
@@ -51,17 +47,6 @@ class CronProject private[cuttle] (val name: String,
     logger.info("Scheduler starting workflow")
     scheduler.start(workload, executor, transactor, logger)
 
-    logger.info("Creating Cron App for http server")
-    val cronApp = CronApp(this, executor)
-
-    logger.info("Starting server")
-    Server.listen(port, onError = { e =>
-      logger.error(e.getMessage)
-      e.printStackTrace()
-      InternalServerError(e.getMessage)
-    })(cronApp.routes)
-
-    logger.info(s"Listening on http://localhost:$port")
   }
 
 }
@@ -87,25 +72,16 @@ object CronProject {
   def apply(name: String,
             version: String = "",
             description: String = "",
-            env: (String, Boolean) = ("", false),
-            authenticator: Auth.Authenticator = Auth.GuestAuth)(
+            env: (String, Boolean) = ("", false))(
     jobs: Workload[CronScheduling])(implicit scheduler: CronScheduler, logger: Logger): CronProject =
-    new CronProject(name, version, description, env, jobs, scheduler, authenticator, logger)
+    new CronProject(name, version, description, env, jobs, scheduler, logger)
 
   private[CronProject] val defaultPlatforms: Seq[ExecutionPlatform] = {
-    import java.util.concurrent.TimeUnit.SECONDS
-
     import platforms._
 
     Seq(
       local.LocalPlatform(
         maxForkedProcesses = 10
-      ),
-      http.HttpPlatform(
-        maxConcurrentRequests = 10,
-        rateLimits = Seq(
-          ".*" -> http.HttpPlatform.RateLimit(1, per = SECONDS)
-        )
       )
     )
   }

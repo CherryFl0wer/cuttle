@@ -53,8 +53,7 @@ case class CronScheduler(logger: Logger) extends Scheduler[CronScheduling] {
 
   private[cron] def snapshot(jobIds: Set[String]) = state.snapshot(jobIds)
 
-  private[cron] def pauseJobs(jobs: Set[CronJob], executor: Executor[CronScheduling])(implicit transactor: XA,
-                                                                                      user: Auth.User): Unit = {
+  private[cron] def pauseJobs(jobs: Set[CronJob], executor: Executor[CronScheduling])(implicit transactor: XA): Unit = {
     logger.debug(s"Pausing jobs $jobs")
     val cancelableExecutions = atomic { implicit tx =>
       val jobsToPause = state.pauseJobs(jobs)
@@ -78,14 +77,14 @@ case class CronScheduler(logger: Logger) extends Scheduler[CronScheduling] {
       case Right(executions) =>
         logger.debug(s"Canceling ${executions.size} executions")
         executions.foreach { execution =>
-          execution.streams.debug(s"Job has been paused by user ${user.userId}")
+          execution.streams.debug(s"Job has been paused")
           execution.cancel()
         }
     }
   }
 
   private[cron] def resumeJobs(jobs: Set[Job[CronScheduling]],
-                               executor: Executor[CronScheduling])(implicit transactor: XA, user: Auth.User): Unit = {
+                               executor: Executor[CronScheduling])(implicit transactor: XA): Unit = {
     logger.debug(s"Resuming jobs $jobs")
     val jobIdsToResume = jobs.map(_.id)
     val resumeQuery = jobIdsToResume.map(queries.resumeJob).reduceLeft(_ *> _)

@@ -59,7 +59,6 @@ class UIITest extends FlatSpec with Matchers {
       override private[cuttle] def writeln(str: CharSequence): Unit = ???
     },
     Seq.empty,
-    "",
     ""
   )
 
@@ -69,7 +68,7 @@ class UIITest extends FlatSpec with Matchers {
       avgJob -> Right(avgExecution)
     )
     val pausedJobs = Map(
-      tickerJob -> PausedJob(tickerJob.id, User("Bobby"), Instant.now())
+      tickerJob -> PausedJob(tickerJob.id, Instant.now())
     )
     val activeAndPausedJobs = (activeJobs, pausedJobs)
     saveToFile(ui.home(activeAndPausedJobs).content, "index.html")
