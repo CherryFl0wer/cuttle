@@ -3,7 +3,7 @@ val writeClasspath = taskKey[File]("Write the project classpath to a file.")
 
 val VERSION = "0.9.2"
 
-lazy val catsCore = "1.5.0"
+lazy val catsCore = "1.6.0"
 lazy val circe = "0.10.1"
 lazy val doobie = "0.6.0"
 
@@ -184,9 +184,11 @@ lazy val cuttle =
         "org.scala-stm" %% "scala-stm" % "0.8",
         "org.scala-lang" % "scala-reflect" % scalaVersion.value,
         "org.typelevel" %% "cats-core" % catsCore,
+        "org.typelevel" %% "cats-effect" % "1.2.0",
         "codes.reactive" %% "scala-time" % "0.4.1",
         "com.zaxxer" % "nuprocess" % "1.1.0",
         "mysql" % "mysql-connector-java" % "6.0.6"
+        
       ),
       libraryDependencies ++= Seq(
         "org.tpolecat" %% "doobie-core",
@@ -267,7 +269,7 @@ lazy val examples =
     .settings(
       fork in Test := true,
       connectInput in Test := true,
-      javaOptions ++= Seq("-Xmx256m", "-XX:+HeapDumpOnOutOfMemoryError"),
+      javaOptions ++= Seq("-Xmx256m", "-XX:+HeapDumpOnOutOfMemoryError")
     )
     .settings(
       Option(System.getProperty("generateExamples"))
