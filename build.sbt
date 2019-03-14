@@ -55,85 +55,6 @@ lazy val commonSettings = Seq(
   pgpPassphrase := sys.env.get("SONATYPE_PASSWORD").map(_.toArray),
   pgpSecretRing := file(".travis/secring.gpg"),
   pgpPublicRing := file(".travis/pubring.gpg"),
-  pomExtra in Global := {
-    <url>https://github.com/criteo/cuttle</url>
-    <licenses>
-      <license>
-        <name>Apache 2</name>
-        <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
-      </license>
-    </licenses>
-    <scm>
-      <connection>scm:git:github.com/criteo/cuttle.git</connection>
-      <developerConnection>scm:git:git@github.com:criteo/cuttle.git</developerConnection>
-      <url>github.com/criteo/cuttle</url>
-    </scm>
-    <developers>
-      <developer>
-        <name>Guillaume Bort</name>
-        <email>g.bort@criteo.com</email>
-        <url>https://github.com/guillaumebort</url>
-        <organization>Criteo</organization>
-        <organizationUrl>http://www.criteo.com</organizationUrl>
-      </developer>
-      <developer>
-        <name>Adrien Surée</name>
-        <email>a.suree@criteo.com</email>
-        <url>https://github.com/haveo</url>
-        <organization>Criteo</organization>
-        <organizationUrl>http://www.criteo.com</organizationUrl>
-      </developer>
-      <developer>
-        <name>Justin Coffey</name>
-        <email>j.coffey@criteo.com</email>
-        <url>https://github.com/jqcoffey</url>
-        <organization>Criteo</organization>
-        <organizationUrl>http://www.criteo.com</organizationUrl>
-      </developer>
-      <developer>
-        <name>Vincent Guerci</name>
-        <email>v.guerci@criteo.com</email>
-        <url>https://github.com/vguerci</url>
-        <organization>Criteo</organization>
-        <organizationUrl>http://www.criteo.com</organizationUrl>
-      </developer>
-      <developer>
-        <name>Alexandre Careil</name>
-        <email>a.careil@criteo.com</email>
-        <url>https://github.com/hhalex</url>
-        <organization>Criteo</organization>
-        <organizationUrl>http://www.criteo.com</organizationUrl>
-      </developer>
-      <developer>
-        <name>Arnaud Dufranne</name>
-        <email>a.dufranne@criteo.com</email>
-        <url>https://github.com/dufrannea</url>
-        <organization>Criteo</organization>
-        <organizationUrl>http://www.criteo.com</organizationUrl>
-      </developer>
-      <developer>
-        <name>Alexey Eryshev</name>
-        <email>a.eryshev@criteo.com</email>
-        <url>https://github.com/eryshev</url>
-        <organization>Criteo</organization>
-        <organizationUrl>http://www.criteo.com</organizationUrl>
-      </developer>
-      <developer>
-        <name>Jean-Philippe Lam Yee Mui</name>
-        <email>jp.lamyeemui@criteo.com</email>
-        <url>https://github.com/Masuzu</url>
-        <organization>Criteo</organization>
-        <organizationUrl>http://www.criteo.com</organizationUrl>
-      </developer>
-      <developer>
-        <name>Jean-Baptiste Catté</name>
-        <email>jb.catte@criteo.com</email>
-        <url>https://github.com/jbkt</url>
-        <organization>Criteo</organization>
-        <organizationUrl>http://www.criteo.com</organizationUrl>
-      </developer>
-    </developers>
-  },
   // Useful to run flakey tests
   commands += Command.single("repeat") { (state, arg) =>
     arg :: s"repeat $arg" :: state
@@ -161,7 +82,7 @@ def removeDependencies(groups: String*)(xml: scala.xml.Node) = {
   ))(xml)
 }
 
-lazy val localdb = {
+lazy val localdb = { // TODO: DELETE
   (project in file("localdb"))
     .settings(commonSettings: _*)
     .settings(
@@ -208,42 +129,6 @@ lazy val timeseries =
       libraryDependencies ++= Seq(
         "ch.vorburger.mariaDB4j" % "mariaDB4j" % "2.3.0" % "test"
       ))
-    .settings(
-      // Webpack
-      resourceGenerators in Compile += Def.task {
-        import scala.sys.process._
-        val streams0 = streams.value
-        val webpackOutputDir: File = (resourceManaged in Compile).value / "public"
-        if (devMode.value) {
-          streams0.log.warn(s"Skipping webpack resource generation.")
-          Nil
-        } else {
-          def listFiles(dir: File): Seq[File] =
-            IO.listFiles(dir)
-              .flatMap(f =>
-                if (f.isDirectory) listFiles(f)
-                else Seq(f))
-          val logger = new ProcessLogger {
-            override def err(s: => String): Unit = streams0.log.info(s"ERR, $s")
-            override def buffer[T](f: => T): T = f
-            override def out(s: => String): Unit = streams0.log.info(s)
-          }
-          logger.out(s"Generating UI assets to $webpackOutputDir...")
-          val operatingSystem = System.getProperty("os.name").toLowerCase
-          if (operatingSystem.indexOf("win") >= 0) {
-            val yarnJsPath = ("where yarn.js" !!).trim()
-            assert(s"""node "$yarnJsPath" install""" ! logger == 0, "yarn failed")
-          } else {
-            assert("yarn install" ! logger == 0, "yarn failed")
-          }
-          logger.out("Running webpack...")
-          assert(s"node node_modules/webpack/bin/webpack.js --output-path $webpackOutputDir --bail" ! logger == 0,
-                 "webpack failed")
-          listFiles(webpackOutputDir)
-        }
-      }.taskValue,
-      cleanFiles += (file(".") / "node_modules")
-    )
     .dependsOn(cuttle % "compile->compile;test->test")
 
 lazy val cron =

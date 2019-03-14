@@ -59,9 +59,9 @@ object DatabaseConfig {
 
     DatabaseConfig(
       if (dbLocations.nonEmpty) dbLocations else Seq(DBLocation("localhost", 3306)),
-      env("MYSQL_DATABASE"),
-      env("MYSQL_USERNAME"),
-      env("MYSQL_PASSWORD")
+      "cuttle_test", "root", "mysql" //env("MYSQL_DATABASE"),
+      //env("MYSQL_USERNAME"),
+      //env("MYSQL_PASSWORD")
     )
   }
 }

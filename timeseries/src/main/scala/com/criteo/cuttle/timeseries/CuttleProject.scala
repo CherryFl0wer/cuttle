@@ -44,6 +44,8 @@ class CuttleProject private[cuttle] (val name: String,
       build(platforms, databaseConfig, retryStrategy, paused, stateRetention, logsRetention, maxVersionsHistory)
 
     logger.info(s"Running cuttle timeseries graph")
+
+    startScheduler()
     // $app was suppose to contain routes doing specific action on jobs timeseries
     // keep it like that for now might change in the future
   }
