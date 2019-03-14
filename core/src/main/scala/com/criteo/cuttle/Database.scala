@@ -15,9 +15,10 @@ import io.circe.parser._
 import cats.data.NonEmptyList
 import cats.effect.Resource.Allocate
 import cats.implicits._
-import cats.effect.{IO, Resource}
+import cats.effect.{Async, IO, Resource}
 import doobie.util.log
 import com.criteo.cuttle.events.{Event, JobSuccessForced}
+import com.zaxxer.hikari.HikariDataSource
 
 /** Configuration of JDBC endpoint.
   *
@@ -208,13 +209,13 @@ private[cuttle] object Database {
 
   def connect(dbConfig: DatabaseConfig)(implicit logger: Logger): XA = {
     // FIXME we shouldn't use allocated as it's unsafe instead we have to flatMap on the Resource[HikariTransactor]
-    val hirakiTransactor = newHikariTransactor(dbConfig)
 
-    val (transactor, releaseIO) =
+    val (hirakiTransactor, releaseIO) = newHikariTransactor(dbConfig).allocated.unsafeRunSync()
+
     logger.debug("Allocated new Hikari transactor")
     connections.getOrElseUpdate(
       dbConfig, {
-        val xa = lockedTransactor(transactor, releaseIO)
+        val xa = lockedTransactor(hirakiTransactor, releaseIO)
         logger.debug("Lock transactor")
         doSchemaUpdates.transact(xa).unsafeRunSync
         logger.debug("Update Cuttle Schema")
@@ -222,6 +223,7 @@ private[cuttle] object Database {
       }
     )
   }
+
 }
 
 private[cuttle] case class Queries(logger: Logger) {
