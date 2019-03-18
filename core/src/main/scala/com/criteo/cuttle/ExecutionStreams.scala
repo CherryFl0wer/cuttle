@@ -37,10 +37,12 @@ private[cuttle] object ExecutionStreams {
   private val transientStorage = Files.createTempDirectory("cuttle-logs").toFile
   private val openHandles = TMap.empty[ExecutionId, (PrintWriter, LastUsageTime)]
   private val maxHandles = 1024
+
   // Size of string to be stored in MySQL MEDIUMTEXT column, must be >= 0 and <= 16,777,215 bytes = 16 MiB.
   // By default our heuristic is 512Kb = 524288 bytes.
   // This can be overridden with com.criteo.cuttle.maxExecutionLogSize JVM property.
   // Note that we are limited by Int.maxValue
+
   private val maxExecutionLogSizeProp = "com.criteo.cuttle.maxExecutionLogSize"
   private val maxExecutionLogSize = sys.props.get(maxExecutionLogSizeProp).map(_.toInt).getOrElse(524288)
 

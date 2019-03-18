@@ -3,7 +3,8 @@ package com.criteo.cuttle.timeseries
 
 import com.criteo.cuttle._
 import com.criteo.cuttle.{Database => CuttleDatabase}
-import com.criteo.cuttle.ThreadPools._, Implicits.serverThreadPool
+import io.circe.{Decoder, Json}
+
 import scala.concurrent.duration.Duration
 
 /**
@@ -22,7 +23,6 @@ class CuttleProject private[cuttle] (val name: String,
     * an HTTP server providing an Web UI and a JSON API.
     *
     * @param platforms The configured [[ExecutionPlatform ExecutionPlatforms]] to use to execute jobs.
-    * @param httpPort The port to use for the HTTP daemon.
     * @param databaseConfig JDBC configuration for MySQL server 5.7.
     * @param retryStrategy The strategy to use for execution retry. Default to exponential backoff.
     * @param paused Automatically pause all jobs at startup.
@@ -32,7 +32,6 @@ class CuttleProject private[cuttle] (val name: String,
     */
   def start(
     platforms: Seq[ExecutionPlatform] = CuttleProject.defaultPlatforms,
-    httpPort: Int = 8888,
     databaseConfig: DatabaseConfig = DatabaseConfig.fromEnv,
     retryStrategy: RetryStrategy = RetryStrategy.ExponentialBackoffRetryStrategy,
     paused: Boolean = false,
@@ -40,7 +39,7 @@ class CuttleProject private[cuttle] (val name: String,
     logsRetention: Option[Duration] = None,
     maxVersionsHistory: Option[Int] = None
   ): Unit = {
-    val (app, startScheduler) =
+    val (_, startScheduler) =
       build(platforms, databaseConfig, retryStrategy, paused, stateRetention, logsRetention, maxVersionsHistory)
 
     logger.info(s"Running cuttle timeseries graph")
@@ -51,7 +50,7 @@ class CuttleProject private[cuttle] (val name: String,
   }
 
   /**
-    * Connect to database and build routes. It allows you to start externally a server and decide when to start the scheduling.
+    * Connect to database and decide when to start the scheduling.
     *
     * @param platforms The configured [[ExecutionPlatform ExecutionPlatforms]] to use to execute jobs.
     * @param databaseConfig JDBC configuration for MySQL server 5.7.
@@ -61,7 +60,8 @@ class CuttleProject private[cuttle] (val name: String,
     * @param logsRetention If specified, automatically clean the execution logs older than the given duration.
     * @param maxVersionsHistory If specified keep only the version information for the x latest versions.
     *
-    * @return a tuple with cuttleRoutes (needed to start a server) and a function to start the scheduler
+    * @return """a tuple with cuttleRoutes (needed to start a server)""" and a function to start the scheduler
+    *      -> TODO : might delete TimeSeriesApp later
     */
   def build(
     platforms: Seq[ExecutionPlatform] = CuttleProject.defaultPlatforms,
@@ -101,17 +101,25 @@ object CuttleProject {
     * @param description The project version as displayed in the UI.
     * @param env The environment as displayed in the UI (The string is the name while the boolean indicates
     *            if the environment is a production one).
-    * @param authenticator The way to authenticate HTTP request for the UI and the private API.
     * @param jobs The workflow to run in this project.
     * @param logger The logger to use to log internal debug informations.
     */
-  def apply(
-    name: String,
-    version: String = "",
-    description: String = "",
-    env: (String, Boolean) = ("", false)
-  )(jobs: Workflow)(implicit logger: Logger): CuttleProject =
+  def apply(name: String,
+            version: String = "",
+            description: String = "",
+            env: (String, Boolean) = ("", false)
+  )(jobs: Workflow)(implicit logger: Logger, wfd : Decoder[Workflow]): CuttleProject =
     new CuttleProject(name, version, description, env, jobs, logger)
+
+  def generate(name: String,
+            version: String = "",
+            description: String = "",
+            env: (String, Boolean) = ("", false))
+            (jsonWorkflow : Json)(implicit logger: Logger, wfd : Decoder[Workflow]) : CuttleProject = {
+
+    val workflow = jsonWorkflow.as[Workflow].fold(ex => Workflow.empty, identity)
+    apply(name, version, description, env)(workflow)
+  }
 
   private[CuttleProject] def defaultPlatforms: Seq[ExecutionPlatform] = {
     import platforms._

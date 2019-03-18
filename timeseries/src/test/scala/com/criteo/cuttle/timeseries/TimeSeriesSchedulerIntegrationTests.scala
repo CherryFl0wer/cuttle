@@ -6,15 +6,15 @@ import java.time.{Duration, Instant, LocalDate}
 import scala.concurrent.duration.Duration.Inf
 import scala.concurrent.{Await, Future}
 import scala.util.{Failure, Success}
-
 import ch.vorburger.mariadb4j._
-
 import com.criteo.cuttle.platforms.local._
 import com.criteo.cuttle.timeseries.TimeSeriesUtils.{Run, TimeSeriesJob}
-import com.criteo.cuttle.{ Database => CuttleDatabase, _}
+import com.criteo.cuttle.{Database => CuttleDatabase, _}
 import Utils.logger
+import io.circe.generic.auto._
 
 object TimeSeriesSchedulerIntegrationTests {
+  import TimeSeries._
   // TODO: turn this into a unit test. This is not done for now as the thread pool responsible for checking the lock on
   // the state database creates non-daemon threads, which would result in the unit test not ending unless it is interrupted
   // from the outside.

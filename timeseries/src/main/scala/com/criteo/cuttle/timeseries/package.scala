@@ -4,9 +4,7 @@ import java.time.{Instant, ZoneId}
 
 import scala.language.experimental.macros
 import scala.language.implicitConversions
-
 import codes.reactive.scalatime._
-
 import scala.reflect.macros.blackbox
 
 /** A [[TimeSeries]] scheduler executes the [[com.criteo.cuttle.Workflow Workflow]] for the
@@ -15,12 +13,13 @@ import scala.reflect.macros.blackbox
   * ensure that at least one [[com.criteo.cuttle.Execution Execution]] is created and successfully run
   * for each defined Job/Period.
   *
-  * The scheduler also allow to [[Backfill]] already computed partitions. The [[Backfill]] can be recursive
+  * The scheduler also allow to [[Backfill]] already computed partitions. The [[com.criteo.cuttle.timeseries.Backfill]] can be recursive
   * or not and an audit log of backfills is kept.
   */
 package object timeseries {
-
   import TimeSeriesCalendar._
+
+  type Dependency = (Job[TimeSeries], Job[TimeSeries], TimeSeriesDependency)
 
   /** Convert a single job to Workflow of a single job. */
   implicit def jobAsWorkflow(job: Job[TimeSeries]): Workflow =

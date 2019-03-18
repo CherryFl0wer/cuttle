@@ -1,36 +1,21 @@
 package com.criteo.cuttle.timeseries
 
-import io.circe._
 import io.circe.syntax._
-
 import com.criteo.cuttle._
+import com.criteo.cuttle.Job.JobApplicable
+import io.circe.{Decoder, Encoder, HCursor, Json}
+import cats.implicits._
 
 /**
   * A timeseries workflow
   **/
 trait Workflow extends Workload[TimeSeries] {
 
-  implicit def workflowEncoder =
-    new Encoder[Workflow] {
-      override def apply(workflow: Workflow) = {
-        val jobs = workflow.jobsInOrder.asJson
-        val tags = workflow.vertices.flatMap(_.tags).asJson
-        val dependencies = workflow.edges.map {
-          case (to, from, _) =>
-            Json.obj(
-              "from" -> from.id.asJson,
-              "to" -> to.id.asJson
-            )
-        }.asJson
-        Json.obj(
-          "jobs" -> jobs,
-          "dependencies" -> dependencies,
-          "tags" -> tags
-        )
-      }
-    }
+  import Workflow._
+
   def all = vertices
-  override def asJson = workflowEncoder(this)
+
+  override def asJson(implicit se : Encoder[Job[TimeSeries]]) = workflowEncoder(se)(this)
 
   private[criteo] type Dependency = (Job[TimeSeries], Job[TimeSeries], TimeSeriesDependency)
 
@@ -105,6 +90,42 @@ trait Workflow extends Workload[TimeSeries] {
 
 /** Utilities for [[Workflow]]. */
 object Workflow {
+  implicit def workflowEncoder(implicit se: Encoder[Job[TimeSeries]]) =
+    new Encoder[Workflow] {
+      override def apply(workflow: Workflow) = {
+        val jobs = workflow.jobsInOrder.asJson
+        val tags = workflow.vertices.flatMap(_.tags).asJson
+        val dependencies = workflow.edges.map {
+          case (to, from, _) =>
+            Json.obj(
+              "from" -> from.id.asJson,
+              "to" -> to.id.asJson
+            )
+        }.asJson
+
+        Json.obj(
+          "jobs" -> jobs,
+          "dependencies" -> dependencies,
+          "tags" -> tags
+        )
+      }
+    }
+
+  implicit def workflowDecoder(implicit j : Decoder[JobApplicable[TimeSeries]]) =
+    new Decoder[Workflow] {
+      override def apply(c : HCursor): Decoder.Result[Workflow] = {
+        val w = Workflow.empty[TimeSeries]
+
+        for {
+          jobs <- c.downField("jobs").as[Set[JobApplicable[TimeSeries]]]
+          //dependency <- c.downField("dependency").as[List[Dependency]]
+          //tags <- c.downField("tags").as[List[Tag]]
+        } yield {
+          jobs
+          w
+        }
+      }
+    }
 
   /** An empty [[Workflow]] (empty graph). */
   def empty[S <: Scheduling]: Workflow = new Workflow {

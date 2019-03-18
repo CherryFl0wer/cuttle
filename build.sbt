@@ -7,6 +7,9 @@ lazy val catsCore = "1.6.0"
 lazy val circe = "0.10.1"
 lazy val doobie = "0.6.0"
 
+addCompilerPlugin("org.spire-math" % "kind-projector" % "0.9.9" cross CrossVersion.binary)
+addCompilerPlugin("org.scalamacros" % "paradise" % "2.1.0" cross CrossVersion.full)
+
 lazy val commonSettings = Seq(
   organization := "com.criteo.cuttle",
   version := VERSION,
@@ -24,7 +27,8 @@ lazy val commonSettings = Seq(
     "-Xfuture",
     "-Ywarn-unused",
     "-Ywarn-unused-import",
-    "-Ypartial-unification"
+    "-Ypartial-unification",
+    "-Xmacro-settings:materialize-derivations"
   ) ++ (CrossVersion.partialVersion(scalaVersion.value) match {
     case Some((2, 12)) => Seq("-Ywarn-unused:-params")
     case _             => Nil
@@ -82,15 +86,6 @@ def removeDependencies(groups: String*)(xml: scala.xml.Node) = {
   ))(xml)
 }
 
-lazy val localdb = { // TODO: DELETE
-  (project in file("localdb"))
-    .settings(commonSettings: _*)
-    .settings(
-      libraryDependencies ++= Seq(
-        "ch.vorburger.mariaDB4j" % "mariaDB4j" % "2.3.0"
-      )
-    )
-}
 
 lazy val cuttle =
   (project in file("core"))
@@ -131,18 +126,6 @@ lazy val timeseries =
       ))
     .dependsOn(cuttle % "compile->compile;test->test")
 
-lazy val cron =
-  (project in file("cron"))
-    .configs(IntegrationTest)
-    .settings(commonSettings: _*)
-    .settings(Defaults.itSettings: _*)
-    .settings(
-      libraryDependencies += "com.github.alonsodomin.cron4s" %% "cron4s-core" % "0.4.5"
-    )
-    .settings(
-      fork in Test := true
-    )
-    .dependsOn(cuttle % "compile->compile;test->test;it->it")
 
 lazy val examples =
   (project in file("examples"))
@@ -166,10 +149,10 @@ lazy val examples =
               "-P:socco:out:examples/target/html",
               "-P:socco:package_com.criteo.cuttle:https://criteo.github.io/cuttle/api/"
             )
-        ))
+          ))
         .getOrElse(Nil): _*
     )
-    .dependsOn(cuttle, timeseries, cron, localdb)
+    .dependsOn(cuttle, timeseries)
 
 lazy val root =
   (project in file("."))
@@ -191,9 +174,7 @@ lazy val root =
       ).flatten,
       unidocAllAPIMappings in (ScalaUnidoc, unidoc) ++= {
         val allJars = {
-          (fullClasspath in cuttle in Compile).value ++
-            (fullClasspath in timeseries in Compile).value ++
-            (fullClasspath in cron in Compile).value
+          (fullClasspath in cuttle in Compile).value
         }
         Seq(
           allJars
@@ -209,6 +190,6 @@ lazy val root =
             .toMap
         )
       },
-      unidocProjectFilter in (ScalaUnidoc, unidoc) := inProjects(cuttle, timeseries, cron)
+      unidocProjectFilter in (ScalaUnidoc, unidoc) := inProjects(cuttle, timeseries)
     )
-    .aggregate(cuttle, timeseries, cron, examples, localdb)
+    .aggregate(cuttle)

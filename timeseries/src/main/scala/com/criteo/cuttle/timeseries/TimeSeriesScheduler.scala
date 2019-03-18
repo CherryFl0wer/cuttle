@@ -12,7 +12,6 @@ import scala.concurrent.duration.{Duration => ScalaDuration}
 import scala.concurrent.stm.Txn.ExternalDecider
 import scala.concurrent.stm._
 import scala.math.Ordering.Implicits._
-
 import cats._
 import cats.effect.IO
 import cats.implicits._
@@ -22,7 +21,6 @@ import doobie.implicits._
 import io.circe._
 import io.circe.generic.semiauto._
 import io.circe.syntax._
-
 import com.criteo.cuttle.ThreadPools.Implicits.sideEffectThreadPool
 import com.criteo.cuttle.ThreadPools._
 import com.criteo.cuttle.Metrics._
@@ -31,6 +29,7 @@ import com.criteo.cuttle.timeseries.Internal._
 import com.criteo.cuttle.timeseries.TimeSeriesCalendar.{Daily, Monthly, NHourly, Weekly}
 import com.criteo.cuttle.timeseries.intervals.Bound.{Bottom, Finite, Top}
 import com.criteo.cuttle.timeseries.intervals.{Interval, IntervalMap}
+import io.circe.Decoder.Result
 
 /** Represents calendar partitions for which a job will be run by the [[TimeSeriesScheduler]].
   * See the companion object for the available calendars. */
@@ -145,6 +144,36 @@ object TimeSeriesCalendar {
           "period" -> "monthly".asJson,
           "zoneId" -> tz.getId().asJson
         )
+    }
+  }
+
+  private[timeseries] implicit val calendarDecoder = new Decoder[TimeSeriesCalendar] {
+
+    override def apply(c: HCursor): Result[TimeSeriesCalendar] = {
+       for {
+         period <- c.downField("period").as[String]
+         timecalendar <- period match {
+           case "hourly" => for {
+             n <- c.downField("n").as[Int]
+           } yield TimeSeriesCalendar.NHourly(n)
+
+           case "daily" => for {
+             zone <- c.downField("zoneId").as[String]
+             zoneId = ZoneId.of(zone)
+           } yield TimeSeriesCalendar.Daily(zoneId)
+
+           case "weekly" => for {
+             zone <- c.downField("zoneId").as[String]
+             zoneId = ZoneId.of(zone)
+             firstDay <- c.downField("firstDay").as[String]
+             first = DayOfWeek.valueOf(firstDay)
+           } yield TimeSeriesCalendar.Weekly(zoneId, first)
+           case "monthly" =>  for {
+             zone <- c.downField("zoneId").as[String]
+             zoneId = ZoneId.of(zone)
+           } yield TimeSeriesCalendar.Monthly(zoneId)
+         }
+       } yield timecalendar
     }
   }
 }
@@ -299,19 +328,36 @@ case class TimeSeriesDependency(offsetLow: Duration, offsetHigh: Duration)
   */
 case class TimeSeries(calendar: TimeSeriesCalendar, start: Instant, end: Option[Instant] = None, maxPeriods: Int = 1)
     extends Scheduling {
+
   type Context = TimeSeriesContext
-  override def asJson: Json =
-    Json.obj(
-      "kind" -> "timeseries".asJson,
-      "start" -> start.asJson,
-      "end" -> end.asJson,
-      "maxPeriods" -> maxPeriods.asJson,
-      "calendar" -> calendar.asJson
-    )
+
+  override def asJson: Json = Json.obj(
+    "kind" -> "timeseries".asJson,
+    "start" -> start.asJson,
+    "end" -> end.asJson,
+    "maxPeriods" -> maxPeriods.asJson,
+    "calendar" -> calendar.asJson
+  )
 }
 
 /** [[TimeSeries]] utilities. */
-object TimeSeries
+object TimeSeries {
+
+  implicit def timeSeriesDecoder = new Decoder[TimeSeries] {
+    override def apply(c: HCursor): Result[TimeSeries] = for {
+      start <- c.downField("start").as[Instant]
+      end <- c.downField("end").as[Option[Instant]]
+      maxPeriods <- c.downField("maxPeriods").as[Int]
+      calendar <- c.downField("calendar").as[TimeSeriesCalendar]
+    } yield TimeSeries(calendar, start, end, maxPeriods)
+  }
+
+
+  implicit def timeSeriesEncoder = new Encoder[TimeSeries] {
+    override def apply(a: TimeSeries): Json = a.asJson
+  }
+
+}
 
 private[timeseries] sealed trait JobState
 private[timeseries] object JobState {

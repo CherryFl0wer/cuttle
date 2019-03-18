@@ -7,6 +7,9 @@ import java.util.Comparator
 
 import Metrics.MetricProvider
 
+
+
+
 /** A scheduler interpret a [[Workflow]] and instanciate [[Execution Executions]] for all
   * defined [[Job Jobs]]. For example, a typical cuttle [[Scheduler]] is the [[timeseries.TimeSeries TimeSeries]]
   * scheduler that executes the graph for each time partition.
@@ -70,7 +73,7 @@ object SchedulingContext {
 
 /** Represent a type of scheduling. A typical cuttle scheduling is [[timeseries.TimeSeries TimeSeries]] for example, that
   * is a scheduling based on a calendar. */
-trait Scheduling {
+trait Scheduling extends Product with Serializable {
 
   /** The [[SchedulingContext]] type that will be passed to [[Execution]] created by
     * the [[Scheduler]] managing this [[Scheduling]]. */
@@ -78,4 +81,5 @@ trait Scheduling {
 
   /** Output the configuration details of this [[Scheduling]] as Json. */
   def asJson: Json = Json.fromString(toString)
+
 }

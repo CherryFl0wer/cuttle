@@ -22,13 +22,18 @@ import java.time._
 
 import scala.concurrent.duration._
 
+import io.circe.parser._
+import Job._
+import TimeSeries._
+
+
 object HelloTimeSeries {
 
   // A cuttle project is just embeded into any Scala application.
   def main(args: Array[String]): Unit = {
 
     // We define a common start date for all our jobs. This is required by the
-    // time series scheduler to define a start date for each job. Here we dynaically
+    // time series scheduler to define a start date for each job. Here we dynamically
     // compute it as 7 days ago (_and we round it to midnight UTC_).
     val start: Instant = LocalDate.now.minusDays(7).atStartOfDay.toInstant(UTC)
 
@@ -44,6 +49,7 @@ object HelloTimeSeries {
           // Because this job uses a time series scheduling configuration the context
           // contains the information about the time partition to compute, ie the start
           // and end date.
+
           val partitionToCompute = (e.context.start) + "-" + (e.context.end)
 
           e.streams.info(s"Hello 1 for $partitionToCompute")
@@ -66,6 +72,7 @@ object HelloTimeSeries {
          |    done
          |    echo Ok
          |'""" ()
+
     }
 
     // Here is our third job. Look how we can also define some metadata such as a human friendly
@@ -117,9 +124,16 @@ object HelloTimeSeries {
     CuttleProject("Hello World", version = "123", env = ("dev", false)) {
       // Any cuttle project contains a Workflow to execute. This Workflow is composed from jobs
       // or from others smaller Workflows.
-      world dependsOn (hello1 and hello2 and hello3)
-    }.
-    // Starts the scheduler and an HTTP server.
-    start(logsRetention = Some(1.hour))
+      val wf = world dependsOn (hello1 and hello2 and hello3)
+      val encode = wf.asJson
+      val str = encode.noSpaces
+      val re = decode[Workflow](str)
+      println(re)
+      wf
+    }
+
+
+    // Starts the scheduler
+    //.start(logsRetention = Some(1.hour))
   }
 }

@@ -911,7 +911,6 @@ class Executor[S <: Scheduling] private[cuttle] (
         Map(
           "running" -> running,
           "waiting" -> waiting,
-          // TODO: to check in UI
           "paused" -> 0,
           "failing" -> failing,
           "finished" -> finished
