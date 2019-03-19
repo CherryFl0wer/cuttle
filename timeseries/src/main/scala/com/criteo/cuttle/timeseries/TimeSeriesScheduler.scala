@@ -29,7 +29,6 @@ import com.criteo.cuttle.timeseries.Internal._
 import com.criteo.cuttle.timeseries.TimeSeriesCalendar.{Daily, Monthly, NHourly, Weekly}
 import com.criteo.cuttle.timeseries.intervals.Bound.{Bottom, Finite, Top}
 import com.criteo.cuttle.timeseries.intervals.{Interval, IntervalMap}
-import io.circe.Decoder.Result
 
 /** Represents calendar partitions for which a job will be run by the [[TimeSeriesScheduler]].
   * See the companion object for the available calendars. */
@@ -125,57 +124,6 @@ object TimeSeriesCalendar {
     def next(t: Instant) = truncateToMonth(t.atZone(tz)).plus(1, MONTHS).toInstant
   }
 
-  private[timeseries] implicit val calendarEncoder = new Encoder[TimeSeriesCalendar] {
-    override def apply(calendar: TimeSeriesCalendar) = calendar match {
-      case NHourly(h) => Json.obj("period" -> "hourly".asJson, "n" -> h.asJson)
-      case Daily(tz: ZoneId) =>
-        Json.obj(
-          "period" -> "daily".asJson,
-          "zoneId" -> tz.getId().asJson
-        )
-      case Weekly(tz: ZoneId, firstDay: DayOfWeek) =>
-        Json.obj(
-          "period" -> "weekly".asJson,
-          "zoneId" -> tz.getId.asJson,
-          "firstDay" -> firstDay.toString.asJson
-        )
-      case Monthly(tz: ZoneId) =>
-        Json.obj(
-          "period" -> "monthly".asJson,
-          "zoneId" -> tz.getId().asJson
-        )
-    }
-  }
-
-  private[timeseries] implicit val calendarDecoder = new Decoder[TimeSeriesCalendar] {
-
-    override def apply(c: HCursor): Result[TimeSeriesCalendar] = {
-       for {
-         period <- c.downField("period").as[String]
-         timecalendar <- period match {
-           case "hourly" => for {
-             n <- c.downField("n").as[Int]
-           } yield TimeSeriesCalendar.NHourly(n)
-
-           case "daily" => for {
-             zone <- c.downField("zoneId").as[String]
-             zoneId = ZoneId.of(zone)
-           } yield TimeSeriesCalendar.Daily(zoneId)
-
-           case "weekly" => for {
-             zone <- c.downField("zoneId").as[String]
-             zoneId = ZoneId.of(zone)
-             firstDay <- c.downField("firstDay").as[String]
-             first = DayOfWeek.valueOf(firstDay)
-           } yield TimeSeriesCalendar.Weekly(zoneId, first)
-           case "monthly" =>  for {
-             zone <- c.downField("zoneId").as[String]
-             zoneId = ZoneId.of(zone)
-           } yield TimeSeriesCalendar.Monthly(zoneId)
-         }
-       } yield timecalendar
-    }
-  }
 }
 
 private[timeseries] object TimeSeriesCalendarView {
@@ -269,6 +217,7 @@ case class TimeSeriesContext(start: Instant,
     extends SchedulingContext {
 
   override def asJson: Json = TimeSeriesContext.encoder(this)
+
   def toId: String = {
     val priority = backfill.fold(0)(_.priority)
     val bytesPriority = BigInt(priority).toByteArray
@@ -306,7 +255,7 @@ object TimeSeriesContext {
 }
 
 /** A [[TimeSeriesDependency]] qualify the dependency between 2 [[com.criteo.cuttle.Job Jobs]] in a
-  * [[TimeSeries]] [[com.criteo.cuttle.Workflow Workflow]]. It can be configured to `offset` the dependency.
+  * [[TimeSeries]] [[com.criteo.cuttle.timeseries.Workflow Workflow]]. It can be configured to `offset` the dependency.
   *
   * Supposing job1 depends on job2 with dependency descriptor (offsetLow, offsetHigh).
   * Then to execute period (low, high) of job1, we need period
@@ -342,21 +291,6 @@ case class TimeSeries(calendar: TimeSeriesCalendar, start: Instant, end: Option[
 
 /** [[TimeSeries]] utilities. */
 object TimeSeries {
-
-  implicit def timeSeriesDecoder = new Decoder[TimeSeries] {
-    override def apply(c: HCursor): Result[TimeSeries] = for {
-      start <- c.downField("start").as[Instant]
-      end <- c.downField("end").as[Option[Instant]]
-      maxPeriods <- c.downField("maxPeriods").as[Int]
-      calendar <- c.downField("calendar").as[TimeSeriesCalendar]
-    } yield TimeSeries(calendar, start, end, maxPeriods)
-  }
-
-
-  implicit def timeSeriesEncoder = new Encoder[TimeSeries] {
-    override def apply(a: TimeSeries): Json = a.asJson
-  }
-
 }
 
 private[timeseries] sealed trait JobState

@@ -4,8 +4,7 @@ import scala.concurrent.Future
 import io.circe._
 import io.circe.syntax._
 import cats.Eq
-import cats.implicits._
-import io.circe.generic.auto._
+import io.circe.Encoder._
 
 /** Allow to tag a job. Tags can be used in the UI/API to filter jobs
   * and more easily retrieve them.
@@ -16,13 +15,7 @@ import io.circe.generic.auto._
 case class Tag(name: String, description: String = "")
 
 object Tag {
-  implicit val tagEncoder = new Encoder[Tag] {
-    override def apply(tag: Tag) =
-      Json.obj(
-        "name" -> tag.name.asJson,
-        "description" -> Option(tag.description).filterNot(_.isEmpty).asJson
-      )
-  }
+
 }
 
 /** The job [[SideEffect]] is the most important part as it represents the real
@@ -57,34 +50,7 @@ case class Job[S <: Scheduling](id: String,
 
 /** Companion object for [[Job]]. */
 case object Job {
-  type JobApplicable[S <: Scheduling] = SideEffect[S] => Job[S]
-
   implicit def eqInstance[S <: Scheduling] = Eq.fromUniversalEquals[Job[S]]
-
-  implicit def jobDecoder[S <: Scheduling : Decoder] = new Decoder[JobApplicable[S]] {
-    override def apply(cursor : HCursor) =  for {
-
-        id <- cursor.downField("id").as[String]
-        name <- cursor.downField("name").as[String]
-        description <- cursor.downField("description").as[String]
-        tags <- cursor.downField("tags").as[Set[Tag]]
-        scheduling <- cursor.downField("scheduling").as[S]
-
-      } yield Job[S](id, scheduling, name, description, tags) _
-
-  }
-
-  implicit def jobEncoder[S <: Scheduling : Encoder] = new Encoder[Job[S]] {
-    override def apply(job: Job[S]) =
-      Json
-        .obj(
-          "id" -> job.id.asJson,
-          "name" -> Option(job.name).filterNot(_.isEmpty).getOrElse(job.id).asJson,
-          "description" -> Option(job.description).filterNot(_.isEmpty).getOrElse("No description").asJson,
-          "scheduling" -> job.scheduling.asJson,
-          "tags" -> job.tags.map(_.name).asJson
-        )
-  }
 }
 
 /** Represent the workload of a Cuttle project, ie. the list of

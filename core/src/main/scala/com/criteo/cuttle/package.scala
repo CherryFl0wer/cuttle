@@ -1,10 +1,17 @@
 package com.criteo
 
 import scala.concurrent._
-
 import cats.effect.IO
 import cats.free._
 import doobie._
+import io.circe.Decoder.Result
+import io.circe.{Decoder, Encoder, HCursor, Json}
+
+
+import cats.implicits._
+import io.circe.Decoder._
+import io.circe.Encoder._
+import io.circe.syntax._
 
 package cuttle {
 
@@ -60,5 +67,44 @@ package object cuttle {
     * The threadpool will be chosen carefully by the [[Executor]].
     */
   implicit def scopedExecutionContext(implicit execution: Execution[_]): ExecutionContext = execution.executionContext
+
+
+  /*
+  * Decoder / Encoder
+  * for package cuttle core
+  * */
+
+
+  type JobApplicable[S <: Scheduling] = SideEffect[S] => Job[S]
+
+  implicit val decodeTag : Decoder[Tag] = Decoder.forProduct2("name", "description")(Tag.apply)
+
+  implicit val encodeTag : Encoder[Tag] = Encoder.forProduct2("name", "description")(t => (t.name, t.description))
+
+
+  implicit def jobDecoder[S <: Scheduling : Decoder] = new Decoder[JobApplicable[S]] {
+    override def apply(cursor : HCursor) : Result[JobApplicable[S]] = for {
+        id   <- cursor.downField("id").as[String]
+        name <- cursor.downField("name").as[String]
+        description <- cursor.downField("description").as[String]
+        tags <- cursor.downField("tags").as[Set[String]]
+        scheduling <- cursor.downField("scheduling").as[S]
+      } yield Job[S](id, scheduling, name, description, tags.map(t => Tag(t))) _
+
+  }
+
+  implicit def jobEncoder[S <: Scheduling : Encoder] = new Encoder[Job[S]] {
+    override def apply(job: Job[S]) = {
+
+      Json
+        .obj(
+          "id" -> job.id.asJson,
+          "name" -> Option(job.name).filterNot(_.isEmpty).getOrElse(job.id).asJson,
+          "description" -> Option(job.description).filterNot(_.isEmpty).getOrElse("No description").asJson,
+          "scheduling" -> job.scheduling.asJson,
+          "tags" -> job.tags.map(_.name).asJson
+        )
+    }
+  }
 
 }

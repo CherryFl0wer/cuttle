@@ -2,7 +2,6 @@ package com.criteo.cuttle.timeseries
 
 import io.circe.syntax._
 import com.criteo.cuttle._
-import com.criteo.cuttle.Job.JobApplicable
 import io.circe.{Decoder, Encoder, HCursor, Json}
 import cats.implicits._
 
@@ -90,7 +89,8 @@ trait Workflow extends Workload[TimeSeries] {
 
 /** Utilities for [[Workflow]]. */
 object Workflow {
-  implicit def workflowEncoder(implicit se: Encoder[Job[TimeSeries]]) =
+
+  implicit def workflowEncoder(implicit dec: Encoder[Job[TimeSeries]]) =
     new Encoder[Workflow] {
       override def apply(workflow: Workflow) = {
         val jobs = workflow.jobsInOrder.asJson
@@ -111,18 +111,26 @@ object Workflow {
       }
     }
 
-  implicit def workflowDecoder(implicit j : Decoder[JobApplicable[TimeSeries]]) =
+  implicit def workflowDecoder(implicit dec: Decoder[JobApplicable[TimeSeries]]) =
     new Decoder[Workflow] {
+
+      // Might move this
+      case class Edge(from : String, to : String)
+
+      // Same
+      implicit val decodeEdge : Decoder[Edge] = Decoder.forProduct2("from", "to")(Edge.apply)
+
+
       override def apply(c : HCursor): Decoder.Result[Workflow] = {
-        val w = Workflow.empty[TimeSeries]
+        val wf = Workflow.empty[TimeSeries]
 
         for {
-          jobs <- c.downField("jobs").as[Set[JobApplicable[TimeSeries]]]
-          //dependency <- c.downField("dependency").as[List[Dependency]]
-          //tags <- c.downField("tags").as[List[Tag]]
+          jobs <- c.downField("jobs").as[List[JobApplicable[TimeSeries]]]
+          dependencies <- c.downField("dependencies").as[List[Edge]]
+          tags <- c.downField("tags").as[List[Tag]]
+
         } yield {
-          jobs
-          w
+          wf
         }
       }
     }

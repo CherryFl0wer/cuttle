@@ -1,25 +1,98 @@
 package com.criteo.cuttle
 
-import java.time.{Instant, ZoneId}
+import java.time.{DayOfWeek, Instant, ZoneId}
 
 import scala.language.experimental.macros
 import scala.language.implicitConversions
 import codes.reactive.scalatime._
+import io.circe.Decoder.Result
+import io.circe._
+import io.circe.java8.time._
+import cats.syntax.either._
+import io.circe.syntax._
+
 import scala.reflect.macros.blackbox
 
-/** A [[TimeSeries]] scheduler executes the [[com.criteo.cuttle.Workflow Workflow]] for the
+/** A [[com.criteo.cuttle.timeseries.TimeSeries]] scheduler executes the [[com.criteo.cuttle.timeseries.Workflow]] for the
   * time partitions defined in a calendar. Each [[com.criteo.cuttle.Job Job]] defines how it mnaps
   * to the calendar (for example Hourly or Daily UTC), and the [[com.criteo.cuttle.Scheduler Scheduler]]
   * ensure that at least one [[com.criteo.cuttle.Execution Execution]] is created and successfully run
   * for each defined Job/Period.
   *
-  * The scheduler also allow to [[Backfill]] already computed partitions. The [[com.criteo.cuttle.timeseries.Backfill]] can be recursive
+  * The scheduler also allow to [[com.criteo.cuttle.timeseries.Backfill]] already computed partitions. The [[com.criteo.cuttle.timeseries.Backfill]] can be recursive
   * or not and an audit log of backfills is kept.
   */
 package object timeseries {
   import TimeSeriesCalendar._
 
   type Dependency = (Job[TimeSeries], Job[TimeSeries], TimeSeriesDependency)
+
+  implicit def calendarEncoder = new Encoder[TimeSeriesCalendar] {
+    override def apply(calendar: TimeSeriesCalendar) = calendar match {
+      case NHourly(h) => Json.obj("period" -> "hourly".asJson, "n" -> h.asJson)
+      case Daily(tz: ZoneId) =>
+        Json.obj(
+          "period" -> "daily".asJson,
+          "zoneId" -> tz.getId().asJson
+        )
+      case Weekly(tz: ZoneId, firstDay: DayOfWeek) =>
+        Json.obj(
+          "period" -> "weekly".asJson,
+          "zoneId" -> tz.getId.asJson,
+          "firstDay" -> firstDay.toString.asJson
+        )
+      case Monthly(tz: ZoneId) =>
+        Json.obj(
+          "period" -> "monthly".asJson,
+          "zoneId" -> tz.getId().asJson
+        )
+    }
+  }
+
+  implicit def calendarDecoder = new Decoder[TimeSeriesCalendar] {
+
+    override def apply(c: HCursor): Result[TimeSeriesCalendar] = {
+      for {
+        period <- c.downField("period").as[String]
+        timecalendar <- period match {
+          case "hourly" => for {
+            n <- c.downField("n").as[Int]
+          } yield TimeSeriesCalendar.NHourly(n)
+
+          case "daily" => for {
+            zone <- c.downField("zoneId").as[String]
+            zoneId = ZoneId.of(zone)
+          } yield TimeSeriesCalendar.Daily(zoneId)
+
+          case "weekly" => for {
+            zone <- c.downField("zoneId").as[String]
+            zoneId = ZoneId.of(zone)
+            firstDay <- c.downField("firstDay").as[String]
+            first = DayOfWeek.valueOf(firstDay)
+          } yield TimeSeriesCalendar.Weekly(zoneId, first)
+          case "monthly" =>  for {
+            zone <- c.downField("zoneId").as[String]
+            zoneId = ZoneId.of(zone)
+          } yield TimeSeriesCalendar.Monthly(zoneId)
+        }
+      } yield timecalendar
+    }
+  }
+
+  implicit def timeSeriesDecoder = new Decoder[TimeSeries] {
+    override def apply(c: HCursor): Result[TimeSeries] = for {
+      start <- c.downField("start").as[Instant]
+      end <- c.downField("end").as[Option[Instant]]
+      maxPeriods <- c.downField("maxPeriods").as[Int]
+      calendar <- c.downField("calendar").as[TimeSeriesCalendar]
+    } yield TimeSeries(calendar, start, end, maxPeriods)
+  }
+
+
+  implicit def timeSeriesEncoder = new Encoder[TimeSeries] {
+    override def apply(a: TimeSeries): Json = a.asJson
+  }
+
 
   /** Convert a single job to Workflow of a single job. */
   implicit def jobAsWorkflow(job: Job[TimeSeries]): Workflow =
