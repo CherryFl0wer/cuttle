@@ -22,11 +22,6 @@ import java.time._
 
 import scala.concurrent.duration._
 
-import io.circe.parser._
-import Job._
-import TimeSeries._
-
-
 object HelloTimeSeries {
 
   // A cuttle project is just embeded into any Scala application.
@@ -76,7 +71,15 @@ object HelloTimeSeries {
     }
 
     // Here is our third job. Look how we can also define some metadata such as a human friendly
-    // name and a set of tags. This information is used in the UI to help retrieving your jobs.
+    // name and a set of tags.
+
+
+    /*
+    * Job("Bar", datetime, "desc", Set(Tag("Foo")) { implicit SideEffect =>
+    *
+    * }
+    *
+    * */
     val hello3 =
       Job("hello3",
           hourly(start),
@@ -97,6 +100,7 @@ object HelloTimeSeries {
             // Throwing an exception is enough to fail the execution, but you can also return
             // a failed Future.
             sys.error("Oops!!!")
+
           } else {
 
             // The completed value is returned to cuttle to announce the job execution as
@@ -125,15 +129,11 @@ object HelloTimeSeries {
       // Any cuttle project contains a Workflow to execute. This Workflow is composed from jobs
       // or from others smaller Workflows.
       val wf = world dependsOn (hello1 and hello2 and hello3)
-      val encode = wf.asJson
-      val str = encode.noSpaces
-      val re = decode[Workflow](str)
-      println(re)
       wf
-    }
+    }.start(logsRetention = Some(1.hour))
 
 
     // Starts the scheduler
-    //.start(logsRetention = Some(1.hour))
+    //
   }
 }
