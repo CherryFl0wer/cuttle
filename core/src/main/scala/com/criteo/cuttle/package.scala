@@ -31,6 +31,7 @@ package cuttle {
     * }}}
     */
   case object Completed extends Completed
+
 }
 
 /**
@@ -69,7 +70,7 @@ package object cuttle {
   implicit def scopedExecutionContext(implicit execution: Execution[_]): ExecutionContext = execution.executionContext
 
 
-  /*
+  /**
   * Decoder / Encoder
   * for package cuttle core
   * */

@@ -1,18 +1,15 @@
 package com.criteo.cuttle.flow
 
 import com.criteo.cuttle._
-
 import java.time._
-import scala.concurrent.duration.Duration
 
+import scala.concurrent.duration.Duration
 import cats.Applicative
 import cats.data.{NonEmptyList, OptionT}
 import cats.implicits._
-
 import io.circe._
 import io.circe.generic.auto._
 import io.circe.syntax._
-
 import doobie._
 import doobie.implicits._
 
@@ -51,41 +48,43 @@ private[flow] object Database {
   val schema = List(
     sql"""
       CREATE TABLE flow_state (
+        workflowid  VARCHAR(255) NOT NULL,
         state       JSON NOT NULL,
         date        DATETIME NOT NULL
       ) ENGINE = INNODB;
 
+      CREATE INDEX flow_state_workflowid ON flow_state (workflowid);
       CREATE INDEX flow_state_by_date ON flow_state (date);
 
       CREATE TABLE flow_contexts (
-        id          VARCHAR(1000) NOT NULL,
+        id          VARCHAR(255) NOT NULL,
         json        JSON NOT NULL,
         PRIMARY KEY (id)
       ) ENGINE = INNODB;
     """.update.run,
     contextIdMigration,
-    NoUpdate // We removed this migration, so we reserve this slot
+    NoUpdate
   )
 
   val doSchemaUpdates: ConnectionIO[Unit] = utils.updateSchema("flow", schema)
 
   def dbStateDecoder(json: Json)(implicit jobs: Set[FlowJob]): Option[State] = {
     type StoredState = List[(String, JobFlowState)]
+    val stored = json.as[StoredState]
+    stored.right.toOption.flatMap { jobsStored =>
+        val state = jobsStored.map { case (jobId, flowState) =>
+           jobs.find(_.id == jobId).map(job => job -> flowState)
+        }
 
-    json.as[StoredState].right.toOption.map(_.flatMap {
-      case (jobId, st) =>
-        jobs.filter(_.id == jobId).map(j => j -> st)
-    }.toMap)
+        Some(state.flatten.toMap)
+    }
   }
 
   def dbStateEncoder(state: State): Json =
     state.toList.map {
-      case (job, jobState) =>
-        (job.id, jobState match {
-              case Done(_) => true
-              case _       => false
-        })
+      case (job, flowState) =>  (job.id, flowState.asJson)
     }.asJson
+
 
   def serializeContext(context: FlowSchedulerContext): ConnectionIO[String] = {
     val id = context.toId
@@ -98,15 +97,15 @@ private[flow] object Database {
     """.update.run *> Applicative[ConnectionIO].pure(id)
   }
 
-  def deserializeState(implicit jobs: Set[FlowJob]): ConnectionIO[Option[State]] = {
+  def deserializeState(workflowId: String)(implicit jobs: Set[FlowJob]): ConnectionIO[Option[State]] = {
     OptionT {
-      sql"SELECT state FROM flow_state ORDER BY date DESC LIMIT 1"
+      sql"SELECT state FROM flow_state WHERE workflowid = ${workflowId} ORDER BY date DESC LIMIT 1"
         .query[Json]
         .option
     }.map(json => dbStateDecoder(json).get).value
   }
 
-  def serializeState(state: State, retention: Option[Duration]): ConnectionIO[Int] = {
+  def serializeState(workflowid : String, state: State, retention: Option[Duration]): ConnectionIO[Int] = {
 
     val now = Instant.now()
     val cleanStateBefore = retention.map { duration =>
@@ -125,7 +124,7 @@ private[flow] object Database {
         }
         .getOrElse(NoUpdate)
       // Insert the latest state
-      x <- sql"INSERT INTO flow_state (state, date) VALUES (${stateJson}, ${now})".update.run
+      x <- sql"INSERT INTO flow_state (workflowid, state, date) VALUES (${workflowid}, ${stateJson}, ${now})".update.run
     } yield x
   }
 

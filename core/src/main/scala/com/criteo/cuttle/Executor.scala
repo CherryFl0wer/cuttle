@@ -298,7 +298,7 @@ case class Execution[S <: Scheduling](
     * they can use this helper function to ensure that at most `concurrencyLimit` code
     * blocks will run at once. Think about it as an asynchronous `Semaphore` helper.
     *
-    * While waiting for the lock, the [[Execution]] will be seen as __WAITING__ in the UI and the API.
+    * While waiting for the lock, the [[Execution]] will be seen as __WAITING__ in the API.
     */
   def withMaxParallelRuns[A, B](lock: A, concurrencyLimit: Int)(thunk: => Future[B]): Future[B] =
     if (isWaiting.get) {
@@ -327,7 +327,7 @@ case class Execution[S <: Scheduling](
     * for a shared thread unsafe resource, they can use this helper function to ensure that only
     * one code block will run at once. Think about it as an asynchronous `synchronized` helper.
     *
-    * While waiting for the lock, the [[Execution]] will be seen as __WAITING__ in the UI and the API.
+    * While waiting for the lock, the [[Execution]] will be seen as __WAITING__ in the API.
     */
   def synchronize[A, B](lock: A)(thunk: => Future[B]): Future[B] =
     withMaxParallelRuns(lock, concurrencyLimit = 1)(thunk)
@@ -335,7 +335,7 @@ case class Execution[S <: Scheduling](
   /** Park this execution for the provided duration. After the duration
     * the returned `Future` will complete allowing the [[SideEffect]] to resume.
     *
-    * During this time, the [[Execution]] will be seen as __WAITING__ in the UI and the API.
+    * During this time, the [[Execution]] will be seen as __WAITING__ in the API.
     */
   def park(duration: FiniteDuration): Future[Unit] =
     if (isWaiting.get) {
@@ -376,7 +376,7 @@ private[cuttle] object Execution {
 trait ExecutionPlatform {
 
   /** @return the list of [[Execution]] waiting for resources on this platform.
-    * These executions will be seen as __WAITING__ in the UI and the API. */
+    * These executions will be seen as __WAITING__ in the API. */
   def waiting: Set[Execution[_]]
 }
 
@@ -388,7 +388,7 @@ private[cuttle] object ExecutionPlatform {
 
 private[cuttle] object Executor {
 
-  // we save a mapping of ThreadName -> ExecutionStreams to be able to redirect logs comming
+  // we save a mapping of ThreadName -> ExecutionStreams to be able to redirect logs coming
   // form different SideEffect (Futures) to the corresponding ExecutionStreams
   private val threadNamesToStreams = new ConcurrentHashMap[String, ExecutionStreams]
 

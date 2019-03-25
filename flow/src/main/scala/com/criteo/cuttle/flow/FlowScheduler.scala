@@ -40,7 +40,7 @@ case class FlowSchedulerContext(start : Instant,
   override def asJson: Json = FlowSchedulerContext.encoder(this)
 
   def toId: String = {
-    s"${start}${workflowId}${UUID.randomUUID().toString}"
+    s"${start}-${workflowId}-${UUID.randomUUID().toString}"
   }
 
   override def logIntoDatabase: ConnectionIO[String] = Database.serializeContext(this)
@@ -55,7 +55,6 @@ case class FlowSchedulerContext(start : Instant,
 // Decoder / Encoder
 object FlowSchedulerContext {
 
-  // TODO: because apparently it does not detect encoding instant
   implicit val encodeInstant: Encoder[Instant] = Encoder.encodeString.contramap[Instant](_.toString)
 
   implicit val decodeInstant: Decoder[Instant] = Decoder.decodeString.emap { str =>
@@ -133,7 +132,8 @@ private[flow] object JobFlowState {
 
 /** A [[FlowScheduler]] executes the [[com.criteo.cuttle.flow.FlowWorkflow Workflow]]
   */
-case class FlowScheduler(logger: Logger) extends Scheduler[FlowScheduling] {
+case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler[FlowScheduling] {
+
   import FlowSchedulerUtils._
 
   override val name = "flow"
@@ -141,13 +141,14 @@ case class FlowScheduler(logger: Logger) extends Scheduler[FlowScheduling] {
   // State of a job
   private val _state = Ref(Map.empty[FlowJob, JobFlowState])
 
-  private[flow] def state: State = atomic { implicit txn =>
+  private[flow] def state: State = atomic { implicit txn => //TODO: Ref?
     _state()
   }
 
   private val queries = Queries(logger)
 
 
+  //TODO Change code make it more like scala functional
   private def runOrLogAndDie(thunk: => Unit, message: => String): Unit = {
     import java.io._
 
@@ -163,6 +164,16 @@ case class FlowScheduler(logger: Logger) extends Scheduler[FlowScheduling] {
       }
     }
   }
+
+  private[flow] def setOfJobRunned(wf : FlowWorkflow) : Set[FlowJob] = atomic { implicit txn =>
+    _state().filter { p =>
+      p._2 match {
+        case Done(_) | Todo(_) => true
+        case _ => false
+      }
+    }.keySet
+  }
+
 
 
   private[flow] def initialize(wf : Workload[FlowScheduling], xa : XA, logger : Logger) = {
@@ -183,7 +194,7 @@ case class FlowScheduler(logger: Logger) extends Scheduler[FlowScheduling] {
 
     logger.info("Update state")
     Database
-      .deserializeState(workflow.vertices)
+      .deserializeState(workflowdId)(workflow.vertices)
       .transact(xa)
       .unsafeRunSync
       .foreach {
@@ -200,12 +211,14 @@ case class FlowScheduler(logger: Logger) extends Scheduler[FlowScheduling] {
                               executor: Executor[FlowScheduling],
                               state : State): Seq[Executable] = {
 
-    val parentMap = workflow.edges.groupBy { case (child, _, _) => child }
-    val jobsList = workflow.jobsInOrder.toSet
+    val jobsRunnedBefore : Set[FlowJob] = setOfJobRunned(workflow)
+    val newWorkflow = FlowWorkflow without(workflow, jobsRunnedBefore)
+    val parentMap = newWorkflow.edges.groupBy { case (child, _, _) => child }
+    val jobsList : Set[FlowJob] = newWorkflow.jobsInOrder.toSet
 
 
     val toRun = jobsList.diff(parentMap.keySet).map { j =>
-      (j, FlowSchedulerContext(Instant.now, workflow.uid.toString, executor.projectVersion, None))
+      (j, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId, None))
     }
 
     toRun.toSeq
@@ -221,20 +234,22 @@ case class FlowScheduler(logger: Logger) extends Scheduler[FlowScheduling] {
       case (_, _, effect) => effect.isCompleted
     }
 
+    // Update state and get the jobs to run
     val (stateSnapshot, toRun) = atomic { implicit txn =>
 
-      def isDone(state: State, job: FlowJob, context: FlowSchedulerContext): Boolean =
+      def isDone(state: State, job: FlowJob): Boolean =
         state.apply(job) match  {
           case Done(_) => true
           case _       => false
         }
 
       // update state with job statuses
-      val newState = completed.foldLeft(state) {
+      val newState = completed.foldLeft(_state()) {
         case (acc, (job, context, future)) =>
+
           val jobState =
-            if (future.value.get.isSuccess || isDone(_state(), job, context)) Done(context.projectVersion)
-            else Todo(s"${job.id}")
+            if (future.value.get.isSuccess || isDone(_state(), job)) Done(context.projectVersion)
+            else Todo(s"${job.id}") // TODO
           acc + (job -> jobState)
       }
 
@@ -256,11 +271,16 @@ case class FlowScheduler(logger: Logger) extends Scheduler[FlowScheduling] {
     }
 
     if (completed.nonEmpty || toRun.nonEmpty) {
-      runOrLogAndDie(Database.serializeState(stateSnapshot, None).transact(xa).unsafeRunSync,
+      runOrLogAndDie(Database.serializeState(workflowdId, stateSnapshot, None).transact(xa).unsafeRunSync,
         "FlowScheduler, cannot serialize state, shutting down")
     }
 
-    Set.empty
+    val newRunning = stillRunning ++ newExecutions.map {
+      case (execution, result) =>
+        (execution.job, execution.context, result)
+    }
+
+    newRunning
   }
 
   override def start(jobs: Workload[FlowScheduling],

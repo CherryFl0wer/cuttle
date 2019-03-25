@@ -13,8 +13,6 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
 
   def all = vertices
 
-  def uid = UUID.randomUUID()
-
   override def asJson(implicit se : Encoder[FlowJob]) = flowWFEncoder(se)(this)
 
   private[criteo] def vertices: Set[FlowJob]
@@ -29,6 +27,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     val parentNodes = edges.map { case (_, parent, _) => parent }
     vertices.filter(!parentNodes.contains(_))
   }
+
 
   // Returns a list of jobs in the workflow sorted topologically, using Kahn's algorithm. At the
   // same time checks that there is no cycle.
@@ -84,16 +83,28 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
       val edges = leftWorkflow.edges ++ rightWorkflow.edges ++ newEdges
     }
   }
+
 }
 
 /** Utilities for [[FlowWorkflow]]. */
 object FlowWorkflow {
 
 
-  /** An empty [[Workflow]] (empty graph). */
+  /** An empty [[FlowWorkflow]] (empty graph). */
   def empty[S <: Scheduling]: FlowWorkflow = new FlowWorkflow {
     def vertices = Set.empty
     def edges = Set.empty
+  }
+
+
+  def without[S <: Scheduling](wf : FlowWorkflow, jobs : Set[FlowJob]) : FlowWorkflow = {
+    val newVertices = wf.vertices.filterNot(jobs)
+    val newEdges = wf.edges.filterNot(p => jobs.contains(p._2))
+
+    new FlowWorkflow {
+      def vertices = newVertices
+      def edges = newEdges
+    }
   }
 
   /**

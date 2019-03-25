@@ -19,7 +19,7 @@ import Metrics.MetricProvider
 trait Scheduler[S <: Scheduling] extends MetricProvider[S] {
   def name: String = this.getClass.getSimpleName
 
-  /** Starts the scheduler for the given [[Workflow]]. Immediatly the scheduler will start interpreting
+  /** Starts the scheduler for the given Workflow. Immediatly the scheduler will start interpreting
     * the workflow and generate [[Execution Executions]] sent to the provided [[Executor]].
     *
     * @param jobs The jobs to run.

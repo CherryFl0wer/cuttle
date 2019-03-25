@@ -14,10 +14,6 @@ import io.circe.Encoder._
   */
 case class Tag(name: String, description: String = "")
 
-object Tag {
-
-}
-
 /** The job [[SideEffect]] is the most important part as it represents the real
   * job logic to execute. A job is defined for a given [[Scheduling]],
   * for example it can be a [[timeseries.TimeSeries TimeSeries]] job. Jobs are also [[Workflow]] with a
