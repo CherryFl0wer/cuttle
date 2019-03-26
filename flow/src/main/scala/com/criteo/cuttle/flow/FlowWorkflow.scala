@@ -97,7 +97,9 @@ object FlowWorkflow {
   }
 
 
-  def without[S <: Scheduling](wf : FlowWorkflow, jobs : Set[FlowJob]) : FlowWorkflow = {
+  def without(wf : FlowWorkflow, jobs : Set[FlowJob]) : FlowWorkflow = {
+    if (jobs.isEmpty) wf
+
     val newVertices = wf.vertices.filterNot(jobs)
     val newEdges = wf.edges.filterNot(p => jobs.contains(p._2))
 

@@ -165,11 +165,11 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     }
   }
 
-  private[flow] def setOfJobRunned(wf : FlowWorkflow) : Set[FlowJob] = atomic { implicit txn =>
-    _state().filter { p =>
+  private[flow] def currentJobsRunning(state : State) : Set[FlowJob] = atomic { implicit txn =>
+    state.filter { p =>
       p._2 match {
-        case Done(_) | Todo(_) => true
-        case _ => false
+        case Done(_) | Todo(_) => false
+        case _ => true
       }
     }.keySet
   }
@@ -211,13 +211,18 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
                               executor: Executor[FlowScheduling],
                               state : State): Seq[Executable] = {
 
-    val jobsRunnedBefore : Set[FlowJob] = setOfJobRunned(workflow)
-    val newWorkflow = FlowWorkflow without(workflow, jobsRunnedBefore)
-    val parentMap = newWorkflow.edges.groupBy { case (child, _, _) => child }
-    val jobsList : Set[FlowJob] = newWorkflow.jobsInOrder.toSet
+    val newWorkflow = FlowWorkflow without(workflow, state.keySet)
 
+    def jobsAllowedToRun(nextJobs : Set[FlowJob], runningJobs : Set[FlowJob]) = {
+      nextJobs.filter { job =>
+        val one = workflow.edges
+          .filter { case (parent, child, _) => parent == job }
+        val two = one.foldLeft(true)( (acc, edge) => acc && !runningJobs.contains(edge._2))
+        two
+      }
+    }
 
-    val toRun = jobsList.diff(parentMap.keySet).map { j =>
+    val toRun = jobsAllowedToRun(newWorkflow.roots, currentJobsRunning(state)).map { j =>
       (j, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId, None))
     }
 
@@ -260,7 +265,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       (newState, toRun)
     }
 
-
     val newExecutions = executor.runAll(toRun)
 
     atomic { implicit txn =>
@@ -292,14 +296,12 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
     def mainLoop(running: Set[RunJob]): Unit = {
       val newRunning = runJobAndGetNextOnes(running, wf, executor, xa)
-      utils.Timeout(ScalaDuration.create(1, "s")).andThen { case _ => mainLoop(newRunning) }
+      if (!newRunning.isEmpty)
+        utils.Timeout(ScalaDuration.create(1, "s")).andThen { case _ => mainLoop(newRunning) }
     }
 
     mainLoop(Set.empty)
   }
-
-
-
 
 }
 
