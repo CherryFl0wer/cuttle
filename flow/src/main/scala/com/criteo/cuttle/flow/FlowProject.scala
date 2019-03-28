@@ -1,9 +1,9 @@
 package com.criteo.cuttle.flow
 
+import java.time.Instant
 import java.util.UUID
 
-import com.criteo.cuttle.{DatabaseConfig, ExecutionPlatform, Executor, Logger, RetryStrategy, platforms, Database => FlowDB}
-import io.circe.Decoder
+import com.criteo.cuttle.{DatabaseConfig, ExecutionPlatform, Executor, Logger, RetryStrategy, XA, platforms, Database => FlowDB}
 
 import scala.concurrent.duration.Duration
 
@@ -14,11 +14,10 @@ class FlowProject(val workflowId: String,
                   val logger: Logger) {
 
   /**
-    * Start scheduling and execution with the given environment. It also starts
-    * an HTTP server providing an Web UI and a JSON API.
+    * Start scheduling and execution with the given environment.
     *
     * @param platforms The configured [[ExecutionPlatform ExecutionPlatforms]] to use to execute jobs.
-    * @param databaseConfig JDBC configuration for MySQL server 5.7.
+    * @param databaseConfig JDBC configuration for MySQL server 5.7. @TODO : Change db type
     * @param retryStrategy The strategy to use for execution retry. Default to exponential backoff.
     * @param paused Automatically pause all jobs at startup.
     * @param stateRetention If specified, automatically clean the timeseries state older than the given duration. @unused
@@ -27,14 +26,14 @@ class FlowProject(val workflowId: String,
     */
   def start(
              platforms: Seq[ExecutionPlatform] = FlowProject.defaultPlatforms,
-             databaseConfig: DatabaseConfig = DatabaseConfig.fromEnv,
              retryStrategy: RetryStrategy = RetryStrategy.ExponentialBackoffRetryStrategy,
              paused: Boolean = false,
+             databaseConfig: DatabaseConfig = DatabaseConfig.fromEnv,
              stateRetention: Option[Duration] = None,
              logsRetention: Option[Duration] = None,
              maxVersionsHistory: Option[Int] = None
            ): Unit = {
-    val startScheduler = build(platforms, databaseConfig, retryStrategy, paused, logsRetention)
+    val startScheduler = build(platforms, retryStrategy, databaseConfig, paused, logsRetention)
 
     logger.info(s"Running cuttle flow graph")
 
@@ -52,13 +51,12 @@ class FlowProject(val workflowId: String,
     * @param logsRetention If specified, automatically clean the execution logs older than the given duration.
     * @param maxVersionsHistory If specified keep only the version information for the x latest versions.
     *
-    * @return """a tuple with cuttleRoutes (needed to start a server)""" and a function to start the scheduler
-    *      -> TODO : might delete TimeSeriesApp later
+    * @return a function to start the scheduler
     */
   def build(
              platforms: Seq[ExecutionPlatform] = FlowProject.defaultPlatforms,
-             databaseConfig: DatabaseConfig = DatabaseConfig.fromEnv,
              retryStrategy: RetryStrategy = RetryStrategy.ExponentialBackoffRetryStrategy,
+             databaseConfig: DatabaseConfig,
              paused: Boolean = false,
              logsRetention: Option[Duration] = None
            ):  () => Unit = {
@@ -69,7 +67,6 @@ class FlowProject(val workflowId: String,
     val startScheduler = () => {
       // Pause strategy here
       // ....
-
       logger.info("Start workflow")
       scheduler.start(jobs, executor, xa, logger)
     }
@@ -88,9 +85,9 @@ object FlowProject {
     * @param jobs The workflow to run in this project.
     * @param logger The logger to use to log internal debug informations.
     */
-  def apply(workflowId: String = "workflow-" + UUID.randomUUID().toString, version: String = "", description: String = "")
-           (jobs: FlowWorkflow)(implicit logger: Logger): FlowProject = // wfd : Decoder[FlowWorkflow]
-    new FlowProject(workflowId, version, description, jobs, logger)
+  def apply(version: String = "", description: String = "")
+           (jobs: FlowWorkflow)(implicit logger: Logger): FlowProject = // implicit wfd : Decoder[FlowWorkflow]
+    new FlowProject(Instant.now() + "-" + UUID.randomUUID().toString, version, description, jobs, logger)
 
 
   private[FlowProject] def defaultPlatforms: Seq[ExecutionPlatform] = {

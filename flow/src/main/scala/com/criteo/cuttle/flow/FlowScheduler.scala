@@ -20,33 +20,20 @@ import scala.concurrent.stm._
 import doobie.implicits._
 
 
-
-/**
-  * @date Thursday 19 March 2019
-*  Works like TimeSeries in general but does not depends on a calendar.
-  *  It is in the same package as TimeSeries because it uses Graph as a base
-  *   .When a job has finished its execution save its output in the DB
-  *   .Then wait for the other jobs in Parallel to finish to send the result to the 'dependent'
-  *   job if there is one.
-* */
-
-
-
 case class FlowSchedulerContext(start : Instant,
                                 projectVersion: String = "",
-                                workflowId : String,
-                                inputs: Option[Json]) extends SchedulingContext {
+                                workflowId : String) extends SchedulingContext {
+
+  var resultToDb : Json = Json.Null
 
   override def asJson: Json = FlowSchedulerContext.encoder(this)
 
-  def toId: String = {
-    s"${start}-${workflowId}-${UUID.randomUUID().toString}"
-  }
-
   override def logIntoDatabase: ConnectionIO[String] = Database.serializeContext(this)
 
+  def toId: String = s"${start}-${workflowId}-${UUID.randomUUID().toString}"
+
   def compareTo(other: SchedulingContext) = other match {
-    case FlowSchedulerContext(timestamp, _, _, _) => start.compareTo(timestamp) // Priority compare // TODO
+    case FlowSchedulerContext(timestamp, _, _) => start.compareTo(timestamp) // Priority compare
   }
 
 }
@@ -66,9 +53,7 @@ object FlowSchedulerContext {
       Json.obj(
         "startAt" -> a.start.asJson,
         "workflowId" -> a.workflowId.asJson,
-        "projectVersion" -> a.projectVersion.asJson,
-        "inputs" -> a.inputs.asJson
-
+        "projectVersion" -> a.projectVersion.asJson
       )
     }
   }
@@ -86,12 +71,13 @@ object FlowSchedulerContext {
 /**
   * A [[FlowScheduling]] has a role of defining the configuration of the scheduler
   */
-case class FlowScheduling() extends Scheduling {
+case class FlowScheduling(inputs : Option[String] = None) extends Scheduling {
 
   type Context = FlowSchedulerContext
 
   override def asJson: Json = Json.obj(
-    "kind" -> "flow".asJson
+    "kind" -> "flow".asJson,
+    "inputs" -> inputs.asJson
   )
 }
 
@@ -99,7 +85,7 @@ private[flow] sealed trait JobFlowState
 
 private[flow] case class Done(projectVersion: String) extends JobFlowState
 private[flow] case class Running(executionId: String) extends JobFlowState
-private[flow] case class Todo(executionId: String) extends JobFlowState
+private[flow] case class Todo(executionId: String) extends JobFlowState // TODO : Delete ?
 
 
 private[flow] object JobFlowState {
@@ -138,12 +124,9 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
   override val name = "flow"
 
-  // State of a job
-  private val _state = Ref(Map.empty[FlowJob, JobFlowState])
+  private val _state = Ref(Map.empty[FlowJob, JobFlowState]) // State of a job
 
-  private[flow] def state: State = atomic { implicit txn => //TODO: Ref?
-    _state()
-  }
+  private[flow] def state: State = atomic { implicit txn => _state() }
 
   private val queries = Queries(logger)
 
@@ -165,7 +148,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     }
   }
 
-  private[flow] def currentJobsRunning(state : State) : Set[FlowJob] = atomic { implicit txn =>
+  private def currentJobsRunning(state : State) : Set[FlowJob] = atomic { implicit txn =>
     state.filter { p =>
       p._2 match {
         case Done(_) | Todo(_) => false
@@ -215,15 +198,15 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
     def jobsAllowedToRun(nextJobs : Set[FlowJob], runningJobs : Set[FlowJob]) = {
       nextJobs.filter { job =>
-        val one = workflow.edges
-          .filter { case (parent, child, _) => parent == job }
-        val two = one.foldLeft(true)( (acc, edge) => acc && !runningJobs.contains(edge._2))
-        two
+        workflow.edges
+          .filter { case (parent, _, _) => parent == job }
+          .foldLeft(true)( (acc, edge) => acc && !runningJobs.contains(edge._2))
       }
     }
 
+
     val toRun = jobsAllowedToRun(newWorkflow.roots, currentJobsRunning(state)).map { j =>
-      (j, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId, None))
+      (j, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId))
     }
 
     toRun.toSeq
@@ -252,10 +235,14 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       val newState = completed.foldLeft(_state()) {
         case (acc, (job, context, future)) =>
 
-          val jobState =
-            if (future.value.get.isSuccess || isDone(_state(), job)) Done(context.projectVersion)
-            else Todo(s"${job.id}") // TODO
-          acc + (job -> jobState)
+          if (future.value.get.isSuccess || isDone(_state(), job)) {
+            Database.insertResult(workflowdId, job.id,  job.scheduling.inputs.asJson, context.resultToDb)
+              .transact(xa)
+              .unsafeRunSync()
+            acc + (job -> Done(context.projectVersion))
+          }
+          else
+            acc
       }
 
       val toRun = jobsToRun(workflow, executor, newState)

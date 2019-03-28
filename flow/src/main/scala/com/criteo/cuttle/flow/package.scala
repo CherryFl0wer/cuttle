@@ -1,13 +1,12 @@
 package com.criteo.cuttle
 
-import java.time.Instant
+import scala.language.experimental.macros
+import scala.language.implicitConversions
+
+import com.criteo.cuttle.{ Database => FlowDB }
 
 import com.criteo.cuttle.flow.FlowSchedulerUtils.FlowJob
 
-import scala.language.experimental.macros
-import scala.language.implicitConversions
-import codes.reactive.scalatime._
-import io.circe.Decoder.Result
 import io.circe.{Decoder, Encoder, HCursor, Json}
 import io.circe.syntax._
 
@@ -18,6 +17,7 @@ package object flow {
 
   type PriorityFactor = Int
   type Dependency = (FlowJob, FlowJob, PriorityFactor)
+
 
   /** Defines an implicit default dependency descriptor for [[FlowScheduling]] graphs.
     * The default is 1, higher is the factor higher is the priority. */

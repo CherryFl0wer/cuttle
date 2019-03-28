@@ -5,7 +5,7 @@ import java.time._
 
 import scala.concurrent.duration.Duration
 import cats.Applicative
-import cats.data.{NonEmptyList, OptionT}
+import cats.data.OptionT
 import cats.implicits._
 import io.circe._
 import io.circe.generic.auto._
@@ -48,19 +48,28 @@ private[flow] object Database {
   val schema = List(
     sql"""
       CREATE TABLE flow_state (
-        workflowid  VARCHAR(255) NOT NULL,
+        workflow_id  VARCHAR(1000) NOT NULL,
         state       JSON NOT NULL,
         date        DATETIME NOT NULL
       ) ENGINE = INNODB;
 
-      CREATE INDEX flow_state_workflowid ON flow_state (workflowid);
+      CREATE INDEX flow_state_workflowid ON flow_state (workflow_id);
       CREATE INDEX flow_state_by_date ON flow_state (date);
 
       CREATE TABLE flow_contexts (
-        id          VARCHAR(255) NOT NULL,
+        id          VARCHAR(1000) NOT NULL,
         json        JSON NOT NULL,
         PRIMARY KEY (id)
       ) ENGINE = INNODB;
+
+      CREATE TABLE flow_results (
+        workflow_id  VARCHAR(1000) NOT NULL,
+        step_id  VARCHAR(1000) NOT NULL,
+        inputs JSON NULL,
+        result JSON NULL,
+        PRIMARY KEY(workflow_id, step_id)
+      ) ENGINE = INNODB;
+
     """.update.run,
     contextIdMigration,
     NoUpdate
@@ -68,6 +77,25 @@ private[flow] object Database {
 
   val doSchemaUpdates: ConnectionIO[Unit] = utils.updateSchema("flow", schema)
 
+
+  def insertResult(wfId : String, stepId : String, inputs : Json, result : Json) = {
+    sql"""
+          INSERT INTO flow_results (workflow_id, step_id, inputs, result) VALUES(${wfId}, ${stepId}, ${inputs}, ${result})
+      """.update.run
+  }
+
+  // TODO : Maybe return list or one response.
+  def retrieveResult(wfId : String, stepId : String) =
+    OptionT {
+      sql"""
+            SELECT result FROM flow_results WHERE workflow_id = ${wfId} AND step_id = ${stepId} ORDER BY date LIMIT 1
+    """.query[Json].option
+    }.value
+
+  /**
+  *  This is all the state management
+    *  Decoder and Encoder for the database
+  * */
   def dbStateDecoder(json: Json)(implicit jobs: Set[FlowJob]): Option[State] = {
     type StoredState = List[(String, JobFlowState)]
     val stored = json.as[StoredState]
@@ -99,7 +127,7 @@ private[flow] object Database {
 
   def deserializeState(workflowId: String)(implicit jobs: Set[FlowJob]): ConnectionIO[Option[State]] = {
     OptionT {
-      sql"SELECT state FROM flow_state WHERE workflowid = ${workflowId} ORDER BY date DESC LIMIT 1"
+      sql"SELECT state FROM flow_state WHERE workflow_id = ${workflowId} ORDER BY date DESC LIMIT 1"
         .query[Json]
         .option
     }.map(json => dbStateDecoder(json).get).value
@@ -124,7 +152,7 @@ private[flow] object Database {
         }
         .getOrElse(NoUpdate)
       // Insert the latest state
-      x <- sql"INSERT INTO flow_state (workflowid, state, date) VALUES (${workflowid}, ${stateJson}, ${now})".update.run
+      x <- sql"INSERT INTO flow_state (workflow_id, state, date) VALUES (${workflowid}, ${stateJson}, ${now})".update.run
     } yield x
   }
 
