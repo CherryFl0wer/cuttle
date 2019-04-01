@@ -31,7 +31,6 @@ package cuttle {
     * }}}
     */
   case object Completed extends Completed
-
 }
 
 /**

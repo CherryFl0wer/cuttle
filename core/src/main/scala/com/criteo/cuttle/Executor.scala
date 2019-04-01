@@ -64,6 +64,11 @@ object RetryStrategy {
       Duration.ofMinutes(5)
   }
 
+  def NoRetryStrategy = new RetryStrategy {
+    def apply[S <: Scheduling](job: Job[S], context: S#Context, previouslyFailing: List[String]): Duration = retryWindow
+    def retryWindow: Duration = Duration.ZERO
+  }
+
   /** Simple retry strategy. Retry after the constant retry window.
     * @param duration Duration of a retry window.
     */
@@ -240,6 +245,7 @@ case class Execution[S <: Scheduling](
     }
     listener
   }
+
   private[cuttle] def removeCancelListener(listener: CancellationListener): Unit = atomic { implicit txn =>
     cancelListeners -= listener
   }
@@ -694,6 +700,7 @@ class Executor[S <: Scheduling] private[cuttle] (
             e.printStackTrace(new PrintWriter(stacktrace))
             execution.streams.error(s"Execution failed:")
             execution.streams.error(stacktrace.toString)
+
             atomic {
               implicit tx =>
                 updateFinishedExecutionCounters(execution, "failure")
@@ -747,6 +754,7 @@ class Executor[S <: Scheduling] private[cuttle] (
   private def run0(all: Seq[(Job[S], S#Context)]): Seq[(Execution[S], Future[Completed])] = {
     sealed trait NewExecution
     case object ToRunNow extends NewExecution
+    case object DontRun extends NewExecution
     case class Throttled(launchDate: Instant) extends NewExecution
 
     val index: Map[(Job[S], S#Context), (Execution[S], Future[Completed])] = runningState.single.map {
@@ -812,12 +820,14 @@ class Executor[S <: Scheduling] private[cuttle] (
                   val promise = Promise[Completed]
 
                   if (recentFailures.contains(job -> context)) {
-                    val (_, failingJob) = recentFailures(job -> context)
-                    recentFailures += ((job -> context) -> (Some(execution) -> failingJob))
-                    val retryInterval = retryStrategy(job, context, previousFailures.map(_.id))
-                    val launchDate = failingJob.failedExecutions.head.endTime.get.plus(retryInterval)
-                    throttledState += (execution -> ((promise, failingJob.copy(nextRetry = Some(launchDate)))))
-                    (job, execution, promise, Throttled(launchDate))
+                    if (retryStrategy.retryWindow != Duration.ZERO) {
+                      val (_, failingJob) = recentFailures(job -> context)
+                      recentFailures += ((job -> context) -> (Some(execution) -> failingJob))
+                      val retryInterval = retryStrategy(job, context, previousFailures.map(_.id))
+                      val launchDate = failingJob.failedExecutions.head.endTime.get.plus(retryInterval)
+                      throttledState += (execution -> ((promise, failingJob.copy(nextRetry = Some(launchDate)))))
+                      (job, execution, promise, Throttled(launchDate))
+                    } else (job, execution, promise, DontRun)
                   } else {
                     addExecution2RunningState(execution, promise)
                     (job, execution, promise, ToRunNow)
@@ -830,7 +840,7 @@ class Executor[S <: Scheduling] private[cuttle] (
       _.fold(
         identity, {
           case (_, execution, promise, whatToDo) =>
-            Future {
+            Future { // Async exec
               execution.streams.debug(s"Execution: ${execution.id}")
               execution.streams.debug(s"Context: ${execution.context.asJson}")
               execution.streams.debug()
@@ -871,7 +881,7 @@ class Executor[S <: Scheduling] private[cuttle] (
                     }
                     if (cancelNow) promise.tryFailure(ExecutionCancelled)
                   }
-
+                case DontRun => execution.streams.error(s" Can't run this execution, stopping.") // TODO: Doing this ?
               }
             }
             (execution, promise.future)
