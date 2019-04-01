@@ -3,7 +3,7 @@ package com.criteo.cuttle.flow
 import java.time.Instant
 import java.util.UUID
 
-import com.criteo.cuttle.{DatabaseConfig, ExecutionPlatform, Executor, Logger, RetryStrategy, XA, platforms, Database => FlowDB}
+import com.criteo.cuttle.{DatabaseConfig, ExecutionPlatform, Executor, Logger, RetryStrategy, platforms, Database => FlowDB}
 
 import scala.concurrent.duration.Duration
 
@@ -47,15 +47,15 @@ class FlowProject(val workflowId: String,
     * @param databaseConfig JDBC configuration for MySQL server 5.7.
     * @param retryStrategy The strategy to use for execution retry. Default to exponential backoff.
     * @param paused Automatically pause all jobs at startup.
-    * @param stateRetention If specified, automatically clean the timeseries state older than the given duration.
-    * @param logsRetention If specified, automatically clean the execution logs older than the given duration.
-    * @param maxVersionsHistory If specified keep only the version information for the x latest versions.
+    * @param stateRetention If specified, automatically clean the flow state older than the given duration. @unused
+    * @param logsRetention If specified, automatically clean the execution logs older than the given duration. @unused
+    * @param maxVersionsHistory If specified keep only the version information for the x latest versions. @unused
     *
     * @return a function to start the scheduler
     */
   def build(
              platforms: Seq[ExecutionPlatform] = FlowProject.defaultPlatforms,
-             retryStrategy: RetryStrategy = RetryStrategy.ExponentialBackoffRetryStrategy,
+             retryStrategy: RetryStrategy = RetryStrategy.NoRetryStrategy,
              databaseConfig: DatabaseConfig,
              paused: Boolean = false,
              logsRetention: Option[Duration] = None

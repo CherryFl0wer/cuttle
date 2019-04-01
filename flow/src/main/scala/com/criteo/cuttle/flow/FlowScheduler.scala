@@ -20,11 +20,18 @@ import scala.concurrent.stm._
 import doobie.implicits._
 
 
+//TODO : decoder / encoder
+// TODO : See with Guillaume for Event based job
+sealed trait JobKind
+case object Success extends JobKind
+case object Failure extends JobKind
+
 case class FlowSchedulerContext(start : Instant,
                                 projectVersion: String = "",
-                                workflowId : String) extends SchedulingContext {
+                                workflowId : String,
+                                resultsFromPreviousNodes : Map[String, Json] = Map.empty) extends SchedulingContext {
 
-  var resultToDb : Json = Json.Null
+  var result : Json = Json.Null // Response of the job that will be saved in the database and store in a map during exec
 
   override def asJson: Json = FlowSchedulerContext.encoder(this)
 
@@ -33,7 +40,7 @@ case class FlowSchedulerContext(start : Instant,
   def toId: String = s"${start}-${workflowId}-${UUID.randomUUID().toString}"
 
   def compareTo(other: SchedulingContext) = other match {
-    case FlowSchedulerContext(timestamp, _, _) => start.compareTo(timestamp) // Priority compare
+    case FlowSchedulerContext(timestamp, _, _, _) => start.compareTo(timestamp) // Priority compare
   }
 
 }
@@ -53,7 +60,8 @@ object FlowSchedulerContext {
       Json.obj(
         "startAt" -> a.start.asJson,
         "workflowId" -> a.workflowId.asJson,
-        "projectVersion" -> a.projectVersion.asJson
+        "projectVersion" -> a.projectVersion.asJson,
+        "cascadingResults" -> a.resultsFromPreviousNodes.asJson
       )
     }
   }
@@ -70,6 +78,8 @@ object FlowSchedulerContext {
 
 /**
   * A [[FlowScheduling]] has a role of defining the configuration of the scheduler
+  * @param inputs Supposed to be the params that can be used inside a job
+  *               Currently defined by a string containing a parsable json object
   */
 case class FlowScheduling(inputs : Option[String] = None) extends Scheduling {
 
@@ -82,11 +92,8 @@ case class FlowScheduling(inputs : Option[String] = None) extends Scheduling {
 }
 
 private[flow] sealed trait JobFlowState
-
 private[flow] case class Done(projectVersion: String) extends JobFlowState
 private[flow] case class Running(executionId: String) extends JobFlowState
-private[flow] case class Todo(executionId: String) extends JobFlowState // TODO : Delete ?
-
 
 private[flow] object JobFlowState {
   implicit val doneEncoder: Encoder[Done] = new Encoder[Done] {
@@ -128,10 +135,13 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
   private[flow] def state: State = atomic { implicit txn => _state() }
 
+  private val _results = Ref(Map.empty[FlowJob, Json])
+
+  private[flow] def results: Map[FlowJob, Json] = atomic { implicit txn => _results() }
+
   private val queries = Queries(logger)
 
 
-  //TODO Change code make it more like scala functional
   private def runOrLogAndDie(thunk: => Unit, message: => String): Unit = {
     import java.io._
 
@@ -151,7 +161,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
   private def currentJobsRunning(state : State) : Set[FlowJob] = atomic { implicit txn =>
     state.filter { p =>
       p._2 match {
-        case Done(_) | Todo(_) => false
+        case Done(_) => false
         case _ => true
       }
     }.keySet
@@ -196,21 +206,44 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
     val newWorkflow = FlowWorkflow without(workflow, state.keySet)
 
-    def jobsAllowedToRun(nextJobs : Set[FlowJob], runningJobs : Set[FlowJob]) = {
+    def jobsAllowedToRun(nextJobs : Set[FlowJob], runningJobs : Set[FlowJob]) =
       nextJobs.filter { job =>
         workflow.edges
           .filter { case (parent, _, _) => parent == job }
           .foldLeft(true)( (acc, edge) => acc && !runningJobs.contains(edge._2))
       }
-    }
 
 
     val toRun = jobsAllowedToRun(newWorkflow.roots, currentJobsRunning(state)).map { j =>
-      (j, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId))
+      val childsOfjob = workflow.childOf(j)
+      val resultsOfChild = childsOfjob.foldLeft(Map.empty[String, Json])((acc, job) => atomic {
+        implicit txn => acc + (job.id -> _results().getOrElse(job, Json.Null))
+      })
+
+      (j, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId, resultsOfChild))
     }
 
     toRun.toSeq
   }
+
+
+  /**
+    * @param job the job to save
+    * @param context the context of the job
+    * @param xa doobie sql
+    * @summary Save job's result in the database and in a map inmemory.
+    *         the map is here to avoid seeking for the result in the db every time we need it
+  * */
+  private def saveResult(job : FlowJob, context : FlowSchedulerContext, xa : XA) = {
+    Database.insertResult(workflowdId, job.id,  job.scheduling.inputs.asJson, context.result)
+      .transact(xa)
+      .unsafeRunSync()
+
+    atomic { implicit txn =>
+      _results() = _results() + (job -> context.result)
+    }
+  }
+
 
   private[flow] def runJobAndGetNextOnes(running : Set[RunJob],
                                          workflow: FlowWorkflow,
@@ -236,13 +269,10 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
         case (acc, (job, context, future)) =>
 
           if (future.value.get.isSuccess || isDone(_state(), job)) {
-            Database.insertResult(workflowdId, job.id,  job.scheduling.inputs.asJson, context.resultToDb)
-              .transact(xa)
-              .unsafeRunSync()
+            saveResult(job, context, xa)
             acc + (job -> Done(context.projectVersion))
           }
-          else
-            acc
+          else acc
       }
 
       val toRun = jobsToRun(workflow, executor, newState)
@@ -253,6 +283,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     }
 
     val newExecutions = executor.runAll(toRun)
+
 
     atomic { implicit txn =>
       _state() = newExecutions.foldLeft(_state()) {
@@ -280,7 +311,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
                      logger: Logger): Unit = {
 
     val wf = initialize(jobs, xa, logger)
-
     def mainLoop(running: Set[RunJob]): Unit = {
       val newRunning = runJobAndGetNextOnes(running, wf, executor, xa)
       if (!newRunning.isEmpty)

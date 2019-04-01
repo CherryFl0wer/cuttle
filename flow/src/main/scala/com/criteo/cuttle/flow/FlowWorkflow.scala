@@ -11,6 +11,9 @@ import io.circe._
   **/
 trait FlowWorkflow extends Workload[FlowScheduling] {
 
+
+  type Dependency = (FlowJob, FlowJob, JobKind)
+
   def all = vertices
 
   override def asJson(implicit se : Encoder[FlowJob]) = flowWFEncoder(se)(this)
@@ -19,13 +22,13 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
   private[criteo] def edges: Set[Dependency]
 
   private[cuttle] def roots: Set[FlowJob] = {
-    val childNodes = edges.map { case (child, _, _) => child }
-    vertices.filter(!childNodes.contains(_))
+    val parentNodes = edges.map { case (parent, _, _) => parent }
+    vertices.filter(!parentNodes.contains(_))
   }
 
   private[cuttle] def leaves: Set[FlowJob] = {
-    val parentNodes = edges.map { case (_, parent, _) => parent }
-    vertices.filter(!parentNodes.contains(_))
+    val childNodes = edges.map { case (_, child, _) => child }
+    vertices.filter(!childNodes.contains(_))
   }
 
 
@@ -33,11 +36,19 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
   // same time checks that there is no cycle.
   private[cuttle] lazy val jobsInOrder: List[FlowJob] = graph.topologicalSort[FlowJob](
     vertices,
-    edges.map { case (child, parent, _) => parent -> child }
+    edges.map { case (parent, child, _) => child -> parent }
   ) match {
     case Some(sortedNodes) => sortedNodes
     case None              => throw new IllegalArgumentException("Workflow has at least one cycle")
   }
+
+
+  private[cuttle] def childOf(vertice : FlowJob) : Set[FlowJob] = {
+    if (roots.contains(vertice)) Set.empty
+    else edges.filter { case (parent, _, _) => parent == vertice }.map { case (_, child, _) => child }
+  }
+
+
 
   /**
     * Compose a [[FlowWorkflow]] with another [[FlowWorkflow]] but without any
@@ -61,7 +72,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     * @param rightWorkflow        The workflow to compose this workflow with.
     * @param dependencyDescriptor If injected implicitly, default dependency descriptor for the current [[com.criteo.cuttle.Scheduling]].
     */
-  def dependsOn(rightWorkflow: FlowWorkflow)(implicit dependencyDescriptor: PriorityFactor): FlowWorkflow =
+  def dependsOn(rightWorkflow: FlowWorkflow)(implicit dependencyDescriptor: JobKind): FlowWorkflow =
     dependsOn((rightWorkflow, dependencyDescriptor))
 
   /**
@@ -71,7 +82,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     *
     * @param rightOperand The workflow to compose this workflow with.
     */
-  def dependsOn(rightOperand: (FlowWorkflow, PriorityFactor)): FlowWorkflow = {
+  def dependsOn(rightOperand: (FlowWorkflow, JobKind)): FlowWorkflow = {
     val (rightWorkflow, depDescriptor) = rightOperand
     val leftWorkflow = this
     val newEdges: Set[Dependency] = for {
@@ -83,6 +94,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
       val edges = leftWorkflow.edges ++ rightWorkflow.edges ++ newEdges
     }
   }
+
 
 }
 
@@ -121,7 +133,7 @@ object FlowWorkflow {
     if (graph
       .topologicalSort[FlowJob](
       workflow.vertices,
-      workflow.edges.map { case (child, parent, _) => parent -> child }
+      workflow.edges.map { case (parent, child, _) => child -> parent }
     )
       .isEmpty) {
       errors += "FlowWorkflow has at least one cycle"
@@ -130,7 +142,7 @@ object FlowWorkflow {
     graph
       .findStronglyConnectedComponents[FlowJob](
       workflow.vertices,
-      workflow.edges.map { case (child, parent, _) => parent -> child }
+      workflow.edges.map { case (parent, child, _) => child -> parent }
     )
       .filter(scc => scc.size >= 2) // Strongly connected components with more than 2 jobs are cycles
       .foreach(scc => errors += s"{${scc.map(job => job.id).mkString(",")}} form a cycle")

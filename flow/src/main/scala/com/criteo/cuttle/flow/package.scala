@@ -3,8 +3,6 @@ package com.criteo.cuttle
 import scala.language.experimental.macros
 import scala.language.implicitConversions
 
-import com.criteo.cuttle.{ Database => FlowDB }
-
 import com.criteo.cuttle.flow.FlowSchedulerUtils.FlowJob
 
 import io.circe.{Decoder, Encoder, HCursor, Json}
@@ -15,13 +13,11 @@ import cats.syntax.either._
 
 package object flow {
 
-  type PriorityFactor = Int
-  type Dependency = (FlowJob, FlowJob, PriorityFactor)
 
-
-  /** Defines an implicit default dependency descriptor for [[FlowScheduling]] graphs.
-    * The default is 1, higher is the factor higher is the priority. */
-  implicit val defaultDependencyDescriptor: PriorityFactor = 1
+  /** Defines an implicit default dependency job kind for [[FlowScheduling]] graphs
+    * Must be available during DSL
+    * */
+  implicit val defaultDependencyDescriptor: JobKind = Success
 
   /** Convert a single job to Workflow of a single job. */
   implicit def jobAsWorkflow(job: Job[FlowScheduling]): FlowWorkflow =
