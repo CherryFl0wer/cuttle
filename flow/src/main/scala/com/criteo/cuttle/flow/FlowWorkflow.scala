@@ -1,7 +1,5 @@
 package com.criteo.cuttle.flow
 
-import java.util.UUID
-
 import com.criteo.cuttle.{Scheduling, Workload}
 import com.criteo.cuttle.flow.FlowSchedulerUtils._
 import io.circe._
@@ -94,6 +92,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
       val edges = leftWorkflow.edges ++ rightWorkflow.edges ++ newEdges
     }
   }
+
 
 
 }

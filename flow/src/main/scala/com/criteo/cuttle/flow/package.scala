@@ -2,20 +2,15 @@ package com.criteo.cuttle
 
 import scala.language.experimental.macros
 import scala.language.implicitConversions
-
 import com.criteo.cuttle.flow.FlowSchedulerUtils.FlowJob
-
 import io.circe.{Decoder, Encoder, HCursor, Json}
 import io.circe.syntax._
-
 import cats.syntax.either._
 
 
+
 package object flow {
-
-
   /** Defines an implicit default dependency job kind for [[FlowScheduling]] graphs
-    * Must be available during DSL
     * */
   implicit val defaultDependencyDescriptor: JobKind = Success
 

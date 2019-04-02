@@ -14,14 +14,14 @@ import io.circe._
 import io.circe.generic.semiauto._
 import io.circe.syntax._
 
-import scala.concurrent._
+import scala.concurrent.{Future, _}
 import scala.concurrent.duration.{Duration => ScalaDuration}
 import scala.concurrent.stm._
 import doobie.implicits._
 
+import scala.concurrent.stm.Txn.ExternalDecider
 
-//TODO : decoder / encoder
-// TODO : See with Guillaume for Event based job
+
 sealed trait JobKind
 case object Success extends JobKind
 case object Failure extends JobKind
@@ -81,7 +81,7 @@ object FlowSchedulerContext {
   * @param inputs Supposed to be the params that can be used inside a job
   *               Currently defined by a string containing a parsable json object
   */
-case class FlowScheduling(inputs : Option[String] = None) extends Scheduling {
+case class FlowScheduling(inputs : Option[String] = None, signals : List[Signal] = List.empty) extends Scheduling {
 
   type Context = FlowSchedulerContext
 
@@ -138,6 +138,13 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
   private val _results = Ref(Map.empty[FlowJob, Json])
 
   private[flow] def results: Map[FlowJob, Json] = atomic { implicit txn => _results() }
+
+  private val _pausedJobs = Ref(Set.empty[PausedJob])
+
+  def pausedJobs(): Set[PausedJob] = atomic { implicit txn =>
+    _pausedJobs()
+  }
+
 
   private val queries = Queries(logger)
 
@@ -207,8 +214,9 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     val newWorkflow = FlowWorkflow without(workflow, state.keySet)
 
     def jobsAllowedToRun(nextJobs : Set[FlowJob], runningJobs : Set[FlowJob]) =
-      nextJobs.filter { job =>
-        workflow.edges
+      nextJobs
+        .filter { job =>
+          workflow.edges
           .filter { case (parent, _, _) => parent == job }
           .foldLeft(true)( (acc, edge) => acc && !runningJobs.contains(edge._2))
       }
@@ -297,12 +305,12 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
         "FlowScheduler, cannot serialize state, shutting down")
     }
 
-    val newRunning = stillRunning ++ newExecutions.map {
+    val statusJobs = stillRunning ++ newExecutions.map {
       case (execution, result) =>
         (execution.job, execution.context, result)
     }
 
-    newRunning
+    statusJobs
   }
 
   override def start(jobs: Workload[FlowScheduling],
@@ -310,14 +318,60 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
                      xa: XA,
                      logger: Logger): Unit = {
 
+    import scala.async.Async.{ async, await }
+
     val wf = initialize(jobs, xa, logger)
     def mainLoop(running: Set[RunJob]): Unit = {
+
       val newRunning = runJobAndGetNextOnes(running, wf, executor, xa)
-      if (!newRunning.isEmpty)
-        utils.Timeout(ScalaDuration.create(1, "s")).andThen { case _ => mainLoop(newRunning) }
+
+      if (!newRunning.isEmpty) async
+      {
+        val ft = Future.firstCompletedOf(newRunning.map { case (_, _, f) => f })
+        await(ft)
+      }.onComplete { f => // TODO: Fail future management
+        //println("Done one future")
+        mainLoop(newRunning)
+      }
+
     }
 
+
     mainLoop(Set.empty)
+  }
+
+
+  private[flow] def pauseJobs(jobs: Set[Job[FlowScheduling]], executor: Executor[FlowScheduling], xa: XA): Unit = {
+    val executionsToCancel = atomic { implicit tx =>
+      val pauseDate = Instant.now()
+      val pausedJobIds = _pausedJobs().map(_.id)
+      val jobsToPause: Set[PausedJob] = jobs
+        .filter(job => !pausedJobIds.contains(job.id))
+        .map(job => PausedJob(job.id, pauseDate))
+
+      if (jobsToPause.isEmpty) return
+
+      _pausedJobs() = _pausedJobs() ++ jobsToPause
+
+      val pauseQuery = jobsToPause.map(queries.pauseJob).reduceLeft(_ *> _)
+      Txn.setExternalDecider(new ExternalDecider {
+        def shouldCommit(implicit txn: InTxnEnd): Boolean = {
+          pauseQuery.transact(xa).unsafeRunSync
+          true
+        }
+      })
+
+      jobsToPause.flatMap { pausedJob =>
+        executor.runningState.filterKeys(_.job.id == pausedJob.id).keys ++ executor.throttledState
+          .filterKeys(_.job.id == pausedJob.id)
+          .keys
+      }
+    }
+    logger.debug(s"we will cancel ${executionsToCancel.size} executions")
+    executionsToCancel.toList.sortBy(_.context).reverse.foreach { execution =>
+      execution.streams.debug(s"Job has been paused")
+      execution.cancel()
+    }
   }
 
 }
@@ -329,6 +383,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
 object FlowSchedulerUtils {
   type FlowJob = Job[FlowScheduling]
+
   type Executable = (FlowJob, FlowSchedulerContext) // A job to be executed
   type RunJob = (FlowJob, FlowSchedulerContext, Future[Completed]) // Job, Context, Result
   type State = Map[FlowJob, JobFlowState]

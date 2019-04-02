@@ -65,8 +65,10 @@ class FlowProject(val workflowId: String,
     val scheduler = new FlowScheduler(logger, workflowId)
 
     val startScheduler = () => {
-      // Pause strategy here
-      // ....
+      if (paused) {
+        logger.info("Pausing workflow")
+        scheduler.pauseJobs(jobs.all, executor, xa)
+      }
       logger.info("Start workflow")
       scheduler.start(jobs, executor, xa, logger)
     }
