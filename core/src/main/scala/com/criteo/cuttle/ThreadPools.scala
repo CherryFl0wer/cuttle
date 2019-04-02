@@ -1,12 +1,12 @@
 package com.criteo.cuttle
 
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.{ExecutorService, Executors, ScheduledExecutorService, ThreadFactory}
 
 import scala.concurrent.ExecutionContext
 import scala.language.implicitConversions
 import scala.util.Try
-
 import cats.effect.{IO, Resource}
 
 object ThreadPools {
@@ -32,10 +32,14 @@ object ThreadPools {
   sealed trait DoobieThreadPool extends WrappedThreadPool with Metrics
 
   object SideEffectThreadPool {
+
+    val uid = UUID.randomUUID().toString
+
     def wrap(wrapRunnable: Runnable => Runnable)(
       implicit executionContext: SideEffectThreadPool): SideEffectThreadPool =
       new SideEffectThreadPool {
         private val delegate = executionContext.underlying
+
 
         override val underlying: ExecutionContext = new ExecutionContext {
           override def execute(runnable: Runnable): Unit = delegate.execute(wrapRunnable(runnable))

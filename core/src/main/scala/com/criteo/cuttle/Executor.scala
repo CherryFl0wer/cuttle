@@ -684,7 +684,7 @@ class Executor[S <: Scheduling] private[cuttle] (
 
   private def unsafeDoRun(execution: Execution[S], promise: Promise[Completed]): Unit =
     promise.completeWith(
-      (Try(execution.run()) match {
+      (Try(execution.run()) match { // Running side effect
         case Success(f) => f
         case Failure(e) => if (execution.forcedSuccess.single()) Future.successful(Completed) else Future.failed(e)
       }).andThen {
@@ -758,9 +758,9 @@ class Executor[S <: Scheduling] private[cuttle] (
     case class Throttled(launchDate: Instant) extends NewExecution
 
     val index: Map[(Job[S], S#Context), (Execution[S], Future[Completed])] = runningState.single.map {
-      case (execution, future) =>
-        ((execution.job, execution.context), (execution, future))
+      case (execution, future) => ((execution.job, execution.context), (execution, future))
     }.toMap
+
     val existingOrNew
       : Seq[Either[(Execution[S], Future[Completed]), (Job[S], Execution[S], Promise[Completed], NewExecution)]] =
       atomic { implicit txn =>
@@ -836,54 +836,56 @@ class Executor[S <: Scheduling] private[cuttle] (
           }
       }
 
+
     existingOrNew.map(
       _.fold(
         identity, {
           case (_, execution, promise, whatToDo) =>
-            Future { // Async exec
-              execution.streams.debug(s"Execution: ${execution.id}")
-              execution.streams.debug(s"Context: ${execution.context.asJson}")
-              execution.streams.debug()
-              whatToDo match {
-                case ToRunNow =>
-                  unsafeDoRun(execution, promise)
-                case Throttled(launchDate) =>
-                  execution.streams.debug(s"Delayed until $launchDate because previous execution failed")
-                  val timerTask = new TimerTask {
-                    def run = {
-                      val runNow = atomic { implicit tx =>
-                        if (throttledState.contains(execution)) {
+            Future {
+                execution.streams.debug(s"Execution: ${execution.id}")
+                execution.streams.debug(s"Context: ${execution.context.asJson}")
+                execution.streams.debug()
+                whatToDo match {
+                  case ToRunNow =>
+                    unsafeDoRun(execution, promise)
+                  case Throttled(launchDate) =>
+                    execution.streams.debug(s"Delayed until $launchDate because previous execution failed")
+                    val timerTask = new TimerTask {
+                      def run = {
+                        val runNow = atomic { implicit tx =>
+                          if (throttledState.contains(execution)) {
+                            throttledState -= execution
+                            addExecution2RunningState(execution, promise)
+                            true
+                          } else {
+                            false
+                          }
+                        }
+                        if (runNow) unsafeDoRun(execution, promise)
+                      }
+                    }
+                    timer.schedule(timerTask, java.util.Date.from(launchDate.atZone(ZoneId.systemDefault()).toInstant))
+                    execution.onCancel { () =>
+                      val cancelNow = atomic { implicit tx =>
+                        val failureKey = (execution.job -> execution.context)
+                        recentFailures.get(failureKey).foreach {
+                          case (_, failingJob) =>
+                            recentFailures += (failureKey -> (None -> failingJob))
+                        }
+                        val isStillDelayed = throttledState.contains(execution)
+                        if (isStillDelayed) {
                           throttledState -= execution
-                          addExecution2RunningState(execution, promise)
                           true
                         } else {
                           false
                         }
                       }
-                      if (runNow) unsafeDoRun(execution, promise)
+                      if (cancelNow) promise.tryFailure(ExecutionCancelled)
                     }
-                  }
-                  timer.schedule(timerTask, java.util.Date.from(launchDate.atZone(ZoneId.systemDefault()).toInstant))
-                  execution.onCancel { () =>
-                    val cancelNow = atomic { implicit tx =>
-                      val failureKey = (execution.job -> execution.context)
-                      recentFailures.get(failureKey).foreach {
-                        case (_, failingJob) =>
-                          recentFailures += (failureKey -> (None -> failingJob))
-                      }
-                      val isStillDelayed = throttledState.contains(execution)
-                      if (isStillDelayed) {
-                        throttledState -= execution
-                        true
-                      } else {
-                        false
-                      }
-                    }
-                    if (cancelNow) promise.tryFailure(ExecutionCancelled)
-                  }
-                case DontRun => execution.streams.error(s" Can't run this execution, stopping.") // TODO: Doing this ?
+                  case DontRun => execution.streams.error(s" Can't run this execution, stopping.") // TODO: Doing this ?
+                }
               }
-            }
+
             (execution, promise.future)
         }
       ))
