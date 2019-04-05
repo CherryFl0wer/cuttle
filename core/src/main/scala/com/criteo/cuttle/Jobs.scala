@@ -5,6 +5,7 @@ import io.circe._
 import io.circe.syntax._
 import cats.Eq
 import io.circe.Encoder._
+import io.circe.generic.auto._
 
 /** Allow to tag a job. Tags can be used in the UI/API to filter jobs
   * and more easily retrieve them.
@@ -13,6 +14,8 @@ import io.circe.Encoder._
   * @param description Description as displayed in the UI.
   */
 case class Tag(name: String, description: String = "")
+
+
 
 /** The job [[SideEffect]] is the most important part as it represents the real
   * job logic to execute. A job is defined for a given [[Scheduling]],
@@ -30,23 +33,32 @@ case class Tag(name: String, description: String = "")
   * @param tags The job tags used to filter jobs in the UI.
   * @param effect The job side effect, representing the real job execution.
   */
-case class Job[S <: Scheduling](id: String,
-                                scheduling: S,
-                                name: String = "",
-                                description: String = "",
-                                tags: Set[Tag] = Set.empty[Tag])(val effect: SideEffect[S]) {
 
+
+sealed trait JobKind
+case object NormalJob extends JobKind
+final case class SignalJob(eventsTrigger : List[String]) extends JobKind
+
+final case class Job[S <: Scheduling](id: String,
+                                scheduling: S,
+                                description: String = "",
+                                kind : JobKind = NormalJob,
+                                tags: Set[Tag] = Set.empty[Tag])
+                               (val effect: SideEffect[S]) {
   /** Run this job for the given [[Execution]].
     *
     * @param execution The execution instance.
     * @return A future indicating the execution result (Failed future means failed execution).
     */
-  private[cuttle] def run(execution: Execution[S]): Future[Completed] = effect(execution)
+  private[cuttle] def run(execution: Execution[S]): Future[Completed] =
+    effect(execution)
 }
+
 
 /** Companion object for [[Job]]. */
 case object Job {
-  implicit def eqInstance[S <: Scheduling] = Eq.fromUniversalEquals[Job[S]]
+  implicit def eqInstance[S <: Scheduling] =
+    Eq.fromUniversalEquals[Job[S]]
 }
 
 /** Represent the workload of a Cuttle project, ie. the list of
@@ -54,7 +66,6 @@ case object Job {
 trait Workload[S <: Scheduling] {
   /** All known jobs in this workload. */
   def all: Set[Job[S]]
-
   /** Represent the jobs as JSON. */
   def asJson(implicit se : Encoder[Job[S]]): Json = {
     val jobs = all.asJson

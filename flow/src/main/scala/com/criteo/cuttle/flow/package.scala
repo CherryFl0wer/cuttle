@@ -10,9 +10,6 @@ import cats.syntax.either._
 
 
 package object flow {
-  /** Defines an implicit default dependency job kind for [[FlowScheduling]] graphs
-    * */
-  implicit val defaultDependencyDescriptor: JobKind = Success
 
   /** Convert a single job to Workflow of a single job. */
   implicit def jobAsWorkflow(job: Job[FlowScheduling]): FlowWorkflow =
@@ -35,7 +32,7 @@ package object flow {
         val jobs = workflow.jobsInOrder.asJson
         val tags = workflow.vertices.flatMap(_.tags).asJson
         val dependencies = workflow.edges.map {
-          case (to, from, _) =>
+          case (from, to) =>
             Json.obj(
               "from" -> from.id.asJson,
               "to" -> to.id.asJson

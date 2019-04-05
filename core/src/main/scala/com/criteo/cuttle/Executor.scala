@@ -10,7 +10,7 @@ import scala.concurrent.duration._
 import scala.concurrent.duration.{Duration => ScalaDuration}
 import scala.concurrent.stm._
 import scala.concurrent.{Future, Promise}
-import scala.reflect.{classTag, ClassTag}
+import scala.reflect.{ClassTag, classTag}
 import scala.util._
 import cats.Eq
 import cats.effect.IO
@@ -343,19 +343,52 @@ case class Execution[S <: Scheduling](
     *
     * During this time, the [[Execution]] will be seen as __WAITING__ in the API.
     */
-  def park(duration: FiniteDuration): Future[Unit] =
+  def park(duration: ScalaDuration): Future[Unit] =
     if (isWaiting.get) {
       sys.error(s"Already waiting")
     } else {
+
       streams.debug(s"Execution parked for $duration...")
       isWaiting.set(true)
+
       val p = Promise[Unit]
+
       p.tryCompleteWith(utils.Timeout(duration))
-      this
-        .onCancel(() => {
-          p.tryComplete(Failure(ExecutionCancelled))
-        })
-        .unsubscribeOn(p.future)
+
+      this.onCancel(
+        () => { p.tryComplete(Failure(ExecutionCancelled)) }
+      ).unsubscribeOn(p.future)
+
+      p.future.andThen {
+        case _ =>
+          streams.debug(s"Resuming")
+          isWaiting.set(false)
+      }
+    }
+
+
+
+  /** Park this execution until the future given is over. After
+    * the returned `Future` will complete allowing the [[SideEffect]] to resume.
+    *
+    * During this time, the [[Execution]] will be seen as __WAITING__ in the API.
+    */
+  def parkWhen(awaiting : Future[Unit]): Future[Unit] =
+    if (isWaiting.get) {
+      sys.error(s"Already waiting")
+    } else {
+
+      streams.debug(s"Execution parked waiting for a event to be done...")
+      isWaiting.set(true)
+
+      val p = Promise[Unit]
+
+      p.tryCompleteWith(awaiting)
+
+      this.onCancel(
+        () => { p.tryComplete(Failure(ExecutionCancelled)) }
+      ).unsubscribeOn(p.future)
+
       p.future.andThen {
         case _ =>
           streams.debug(s"Resuming")
@@ -392,6 +425,7 @@ private[cuttle] object ExecutionPlatform {
     platforms.find(classTag[E].runtimeClass.isInstance).map(_.asInstanceOf[E])
 }
 
+
 private[cuttle] object Executor {
 
   // we save a mapping of ThreadName -> ExecutionStreams to be able to redirect logs coming
@@ -399,6 +433,7 @@ private[cuttle] object Executor {
   private val threadNamesToStreams = new ConcurrentHashMap[String, ExecutionStreams]
 
   def getStreams(threadName: String): Option[ExecutionStreams] = Option(threadNamesToStreams.get(threadName))
+
 }
 
 /** An [[Executor]] is responsible to actually execute the [[SideEffect]] functions for the
@@ -410,7 +445,7 @@ class Executor[S <: Scheduling] private[cuttle] (
   val projectName: String,
   val projectVersion: String,
   logsRetention: Option[ScalaDuration] = None)(implicit retryStrategy: RetryStrategy)
-    extends MetricProvider[S] {
+    extends MetricProvider[S]  {
 
   import ExecutionStatus._
   import Implicits.sideEffectThreadPool
@@ -432,6 +467,10 @@ class Executor[S <: Scheduling] private[cuttle] (
       "cuttle_executions_total",
       help = "The number of finished executions that we have in concrete states by job and by tag"
     ))
+
+
+
+  private def triggerSignal(signalName : String) = ()
 
   // executions that failed recently and are now running
   private def retryingExecutions(filteredJobs: Set[String]): Seq[(Execution[S], FailingJob, ExecutionStatus)] =
@@ -509,6 +548,7 @@ class Executor[S <: Scheduling] private[cuttle] (
       flagWaitingExecutions(runningState.single.keys.toSeq.filter(e => filteredJobs.contains(e.job.id))).map(_._2)
     (statuses.count(_ == ExecutionRunning), statuses.count(_ == ExecutionWaiting))
   }
+
   private[cuttle] def runningExecutions(filteredJobs: Set[String],
                                         sort: String,
                                         asc: Boolean,
@@ -644,6 +684,7 @@ class Executor[S <: Scheduling] private[cuttle] (
     }
   }
 
+
   private[cuttle] def forceSuccess(executionId: String): Unit = {
     val toForce = atomic { implicit tx =>
       (runningState.keys ++ throttledState.keys)
@@ -751,6 +792,8 @@ class Executor[S <: Scheduling] private[cuttle] (
         Set("type" -> status, "job_id" -> execution.job.id) ++ tagsLabel
       )
     }
+
+
   private def run0(all: Seq[(Job[S], S#Context)]): Seq[(Execution[S], Future[Completed])] = {
     sealed trait NewExecution
     case object ToRunNow extends NewExecution
@@ -836,12 +879,11 @@ class Executor[S <: Scheduling] private[cuttle] (
           }
       }
 
-
     existingOrNew.map(
       _.fold(
         identity, {
-          case (_, execution, promise, whatToDo) =>
-            Future {
+          case (_, execution: Execution[S], promise: Promise[Completed], whatToDo: NewExecution) =>
+              Future {
                 execution.streams.debug(s"Execution: ${execution.id}")
                 execution.streams.debug(s"Context: ${execution.context.asJson}")
                 execution.streams.debug()

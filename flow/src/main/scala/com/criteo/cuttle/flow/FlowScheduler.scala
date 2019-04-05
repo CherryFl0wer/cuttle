@@ -1,30 +1,23 @@
 package com.criteo.cuttle.flow
 
-import java.time.{Duration, Instant, ZoneId}
+import java.time.{Instant, ZoneId}
 import java.util.{Comparator, UUID}
 
 import cats._
 import cats.implicits._
-import com.criteo.cuttle._
 import com.criteo.cuttle.ThreadPools.Implicits.sideEffectThreadPool
 import com.criteo.cuttle.ThreadPools._
+import com.criteo.cuttle._
 import com.criteo.cuttle.flow.FlowSchedulerUtils._
 import doobie.free.connection.ConnectionIO
+import doobie.implicits._
 import io.circe._
 import io.circe.generic.semiauto._
 import io.circe.syntax._
 
-import scala.concurrent.{Future, _}
-import scala.concurrent.duration.{Duration => ScalaDuration}
-import scala.concurrent.stm._
-import doobie.implicits._
-
+import scala.concurrent.Future
 import scala.concurrent.stm.Txn.ExternalDecider
-
-
-sealed trait JobKind
-case object Success extends JobKind
-case object Failure extends JobKind
+import scala.concurrent.stm._
 
 case class FlowSchedulerContext(start : Instant,
                                 projectVersion: String = "",
@@ -81,7 +74,7 @@ object FlowSchedulerContext {
   * @param inputs Supposed to be the params that can be used inside a job
   *               Currently defined by a string containing a parsable json object
   */
-case class FlowScheduling(inputs : Option[String] = None, signals : List[Signal] = List.empty) extends Scheduling {
+case class FlowScheduling(inputs : Option[String] = None) extends Scheduling {
 
   type Context = FlowSchedulerContext
 
@@ -121,8 +114,6 @@ private[flow] object JobFlowState {
 
 
 
-
-
 /** A [[FlowScheduler]] executes the [[com.criteo.cuttle.flow.FlowWorkflow Workflow]]
   */
 case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler[FlowScheduling] {
@@ -148,7 +139,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
   private val queries = Queries(logger)
 
-
   private def runOrLogAndDie(thunk: => Unit, message: => String): Unit = {
     import java.io._
 
@@ -173,8 +163,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       }
     }.keySet
   }
-
-
 
   private[flow] def initialize(wf : Workload[FlowScheduling], xa : XA, logger : Logger) = {
     val workflow = wf.asInstanceOf[FlowWorkflow]
@@ -217,7 +205,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       nextJobs
         .filter { job =>
           workflow.edges
-          .filter { case (parent, _, _) => parent == job }
+          .filter { case (parent, _) => parent == job }
           .foldLeft(true)( (acc, edge) => acc && !runningJobs.contains(edge._2))
       }
 
@@ -266,8 +254,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     // Update state and get the jobs to run
     val (stateSnapshot, toRun) = atomic { implicit txn =>
 
-      def isDone(state: State, job: FlowJob): Boolean =
-        state.apply(job) match  {
+      def isDone(state: State, job: FlowJob): Boolean = state.apply(job) match  {
           case Done(_) => true
           case _       => false
         }
@@ -318,7 +305,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
                      xa: XA,
                      logger: Logger): Unit = {
 
-    import scala.async.Async.{ async, await }
+    import scala.async.Async.{async, await}
 
     val wf = initialize(jobs, xa, logger)
     def mainLoop(running: Set[RunJob]): Unit = {
@@ -330,12 +317,10 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
         val ft = Future.firstCompletedOf(newRunning.map { case (_, _, f) => f })
         await(ft)
       }.onComplete { f => // TODO: Fail future management
-        //println("Done one future")
         mainLoop(newRunning)
       }
 
     }
-
 
     mainLoop(Set.empty)
   }

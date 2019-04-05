@@ -3,7 +3,7 @@ package com.criteo.cuttle.flow
 import java.time.Instant
 import java.util.UUID
 
-import com.criteo.cuttle.{DatabaseConfig, ExecutionPlatform, Executor, Logger, RetryStrategy, platforms, Database => FlowDB}
+import com.criteo.cuttle.{DatabaseConfig, ExecutionPlatform, Executor, Logger, RetryStrategy, Scheduling, platforms, Database => FlowDB}
 
 import scala.concurrent.duration.Duration
 
@@ -62,7 +62,10 @@ class FlowProject(val workflowId: String,
            ):  () => Unit = {
     val xa = FlowDB.connect(databaseConfig)(logger)
     val executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, version, logsRetention)(retryStrategy)
-    val scheduler = new FlowScheduler(logger, workflowId)
+    val scheduler = FlowScheduler(logger, workflowId)
+
+    // Add executor
+    WorkflowExecutorManager.addWorkflowReference(workflowId, executor)
 
     val startScheduler = () => {
       if (paused) {
@@ -78,7 +81,6 @@ class FlowProject(val workflowId: String,
 }
 
 object FlowProject {
-
   /**
     * Create a new project.
     * @param workflowId workflow id
@@ -90,7 +92,6 @@ object FlowProject {
   def apply(version: String = "", description: String = "")
            (jobs: FlowWorkflow)(implicit logger: Logger): FlowProject = // implicit wfd : Decoder[FlowWorkflow]
     new FlowProject(Instant.now() + "-" + UUID.randomUUID().toString, version, description, jobs, logger)
-
 
   private[FlowProject] def defaultPlatforms: Seq[ExecutionPlatform] = {
     import platforms._

@@ -37,11 +37,11 @@ package cuttle {
   * Core cuttle concepts are defined here.
   *
   *  - A [[CuttleProject]] is basically a [[Workflow]] to execute.
-  *  - [[Workflow]]s are directed acyclic graphs of [[Job]]s.
-  *  - [[Scheduler]] is defined for a given [[Scheduling]] mechanism.
-  *  - [[Execution]]s are created by a [[Scheduler]] for a given [[Job]] and [[SchedulingContext]].
-  *  - [[Executor]] handles the [[SideEffect]]s execution.
-  *  - [[SideEffect]]s are plain asynchronous Scala functions and can use [[com.criteo.cuttle.ExecutionPlatform]]s to
+  *  - [[Workflow]]s are directed acyclic graphs of [[com.criteo.cuttle.Job]]s.
+  *  - [[com.criteo.cuttle.Scheduler]] is defined for a given [[com.criteo.cuttle.Scheduling]] mechanism.
+  *  - [[com.criteo.cuttle.Execution]]s are created by a [[com.criteo.cuttle.Scheduler]] for a given [[com.criteo.cuttle.Job]] and [[com.criteo.cuttle.SchedulingContext]].
+  *  - [[com.criteo.cuttle.Executor]] handles the [[com.criteo.cuttle.SideEffect]]s execution.
+  *  - [[com.criteo.cuttle.SideEffect]]s are plain asynchronous Scala functions and can use [[com.criteo.cuttle.ExecutionPlatform]]s to
   *    access underlying resources.
   */
 package object cuttle {
@@ -80,16 +80,18 @@ package object cuttle {
   implicit val decodeTag : Decoder[Tag] = Decoder.forProduct2("name", "description")(Tag.apply)
 
   implicit val encodeTag : Encoder[Tag] = Encoder.forProduct2("name", "description")(t => (t.name, t.description))
+  implicit val decodeJobKind : Decoder[JobKind] = io.circe.generic.semiauto.deriveDecoder[JobKind]
+  implicit val encodeJobKind : Encoder[JobKind] = io.circe.generic.semiauto.deriveEncoder[JobKind]
 
 
   implicit def jobDecoder[S <: Scheduling : Decoder] = new Decoder[JobApplicable[S]] {
     override def apply(cursor : HCursor) : Result[JobApplicable[S]] = for {
         id   <- cursor.downField("id").as[String]
-        name <- cursor.downField("name").as[String]
+        kind <- cursor.downField("kind").as[JobKind]
         description <- cursor.downField("description").as[String]
         tags <- cursor.downField("tags").as[Set[String]]
         scheduling <- cursor.downField("scheduling").as[S]
-      } yield Job[S](id, scheduling, name, description, tags.map(t => Tag(t))) _
+      } yield Job[S](id, scheduling, description, kind, tags.map(t => Tag(t))) _
 
   }
 
@@ -99,7 +101,7 @@ package object cuttle {
       Json
         .obj(
           "id" -> job.id.asJson,
-          "name" -> Option(job.name).filterNot(_.isEmpty).getOrElse(job.id).asJson,
+          "kind" -> job.kind.asJson,
           "description" -> Option(job.description).filterNot(_.isEmpty).getOrElse("No description").asJson,
           "scheduling" -> job.scheduling.asJson,
           "tags" -> job.tags.map(_.name).asJson
