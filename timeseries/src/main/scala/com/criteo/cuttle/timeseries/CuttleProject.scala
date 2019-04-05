@@ -111,16 +111,6 @@ object CuttleProject {
   )(jobs: Workflow)(implicit logger: Logger, wfd : Decoder[Workflow]): CuttleProject =
     new CuttleProject(name, version, description, env, jobs, logger)
 
-  def generate(name: String,
-            version: String = "",
-            description: String = "",
-            env: (String, Boolean) = ("", false))
-            (jsonWorkflow : Json)(implicit logger: Logger, wfd : Decoder[Workflow]) : CuttleProject = {
-
-    val workflow = jsonWorkflow.as[Workflow].fold(ex => Workflow.empty, identity)
-    apply(name, version, description, env)(workflow)
-  }
-
   private[CuttleProject] def defaultPlatforms: Seq[ExecutionPlatform] = {
     import platforms._
 

@@ -57,20 +57,6 @@ private[timeseries] object TimeSeriesApp {
         "description" -> Option(tag.description).filterNot(_.isEmpty).asJson
       )
   }
-
-  implicit def jobEncoder = new Encoder[Job[TimeSeries]] {
-    override def apply(job: Job[TimeSeries]) =
-      Json
-        .obj(
-          "id" -> job.id.asJson,
-          "name" -> Option(job.name).filterNot(_.isEmpty).getOrElse(job.id).asJson,
-          "description" -> Option(job.description).filterNot(_.isEmpty).asJson,
-          "scheduling" -> job.scheduling.asJson,
-          "tags" -> job.tags.map(_.name).asJson
-        )
-        .asJson
-  }
-
 }
 
 private[timeseries] case class TimeSeriesApp(project: CuttleProject,

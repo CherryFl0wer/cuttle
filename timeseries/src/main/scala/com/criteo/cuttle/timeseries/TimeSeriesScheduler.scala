@@ -24,7 +24,7 @@ import io.circe.syntax._
 import com.criteo.cuttle.ThreadPools.Implicits.sideEffectThreadPool
 import com.criteo.cuttle.ThreadPools._
 import com.criteo.cuttle.Metrics._
-import com.criteo.cuttle._
+import com.criteo.cuttle.{XA, _}
 import com.criteo.cuttle.timeseries.Internal._
 import com.criteo.cuttle.timeseries.TimeSeriesCalendar.{Daily, Monthly, NHourly, Weekly}
 import com.criteo.cuttle.timeseries.intervals.Bound.{Bottom, Finite, Top}
@@ -289,9 +289,6 @@ case class TimeSeries(calendar: TimeSeriesCalendar, start: Instant, end: Option[
   )
 }
 
-/** [[TimeSeries]] utilities. */
-object TimeSeries {
-}
 
 private[timeseries] sealed trait JobState
 private[timeseries] object JobState {
@@ -386,7 +383,7 @@ case class TimeSeriesScheduler(logger: Logger,
       s"""
          |Error during backfill creation.
          |Job id: ${job.id}
-         |Job name: ${job.name}
+         |Job kind: ${job.kind.toString}
          |Error: $msg
         """.stripMargin
   }
@@ -782,10 +779,12 @@ case class TimeSeriesScheduler(logger: Logger,
         val definedInterval = Interval(Finite(calendar.ceil(job.scheduling.start)),
                                        job.scheduling.end.map(calendar.truncate _).map(Finite.apply _).getOrElse(Top))
         val oldJobState = _state().getOrElse(job, IntervalMap.empty[Instant, JobState])
+
         val missingIntervals = IntervalMap(definedInterval -> (()))
           .whenIsUndef(oldJobState.intersect(definedInterval))
           .toList
           .map(_._1)
+
         val jobState = missingIntervals
           .foldLeft(oldJobState) { (st, interval) =>
             st.update(interval, Todo(None))
@@ -828,7 +827,7 @@ case class TimeSeriesScheduler(logger: Logger,
                                                backfills: Set[Backfill],
                                                completed: Set[Run]): (State, Set[Backfill], Set[Backfill]) = {
     def isDone(state: State, job: TimeSeriesJob, context: TimeSeriesContext): Boolean =
-      state.apply(job).intersect(context.toInterval).toList.forall {
+      state.apply(job).intersect(context.toInterval).toList.forall  {
         case (_, Done(_)) => true
         case _            => false
       }
@@ -992,7 +991,7 @@ case class TimeSeriesScheduler(logger: Logger,
       case (gauge, (job, lastSuccess)) =>
         val tags = if (!job.tags.isEmpty) Set("tags" -> job.tags.map(_.name).mkString(",")) else Nil
         gauge.labeled(
-          Set("job_id" -> job.id, "job_name" -> job.name) ++ tags,
+          Set("job_id" -> job.id, "job_kind" -> job.kind.toString) ++ tags,
           Instant.now.getEpochSecond - lastSuccess.getEpochSecond
         )
     }
@@ -1022,7 +1021,7 @@ case class TimeSeriesScheduler(logger: Logger,
         latencyValues.foldLeft(gauge) {
           case (gauge, (job, latency)) =>
             val tags = if (!job.tags.isEmpty) Set("tags" -> job.tags.map(_.name).mkString(",")) else Nil
-            gauge.labeled(Set("job_id" -> job.id, "job_name" -> job.name) ++ tags, latency)
+            gauge.labeled(Set("job_id" -> job.id, "job_kind" -> job.kind.toString) ++ tags, latency)
         }
     }
 
