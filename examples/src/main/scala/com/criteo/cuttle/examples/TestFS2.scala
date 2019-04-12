@@ -18,18 +18,24 @@ object TestFS2 extends IOApp {
       servers = List("localhost:9092")))
 
 
-    Stream(
-      flowSignalTopic
-        .consume
-        .concurrently(
-        Stream.awakeEvery[IO](3 seconds).evalMap { n =>
-          flowSignalTopic.pushOne((s"workflow-rnd-${rnd.nextInt(2)}", s"signal-event-${n._1.toString}"))
-        })).parJoin(2).compile.drain.unsafeRunAsyncAndForget()
+    val backend = for {
+      consumer <- Stream(flowSignalTopic.consume)
+      pusher   = Stream.awakeEvery[IO](1.seconds).evalMap {  n =>
+        flowSignalTopic.pushOne((s"workflow-rnd-${rnd.nextInt(2)}", s"signal-event-${n._1.toString}"))
+      }
+      _ <- Stream(consumer.concurrently(pusher)).parJoin(2)
+
+    } yield ()
+
+    backend.compile.drain.unsafeRunAsyncAndForget()
 
 
     Stream(flowSignalTopic.subscribeTo(record => record.key == "workflow-rnd-1"))
-      .concurrently(flowSignalTopic.subscribeTo(record => record.key == "workflow-rnd-1"))
-      .parJoin(2).compile.drain.as(ExitCode.Success)
+      .concurrently(flowSignalTopic.subscribeTo(record => record.key == "workflow-rnd-0"))
+      .parJoin(2)
+      .compile
+      .drain
+      .as(ExitCode.Success)
 
     }
 }

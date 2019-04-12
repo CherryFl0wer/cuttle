@@ -2,8 +2,8 @@ package com.criteo.cuttle.flow.signals
 
 import cats.effect._
 import cats.implicits._
-import fs2.Pipe
-import fs2.concurrent.{Queue, Topic}
+import fs2.Stream
+import fs2.concurrent.Topic
 import fs2.kafka._
 
 import scala.concurrent.duration._
@@ -48,8 +48,7 @@ class KafkaNotification[K, V](val kafkaConfig : KafkaConfig)
       .subscribe(10)
       .collect { case Right(msg) => msg }
       .filter(ev => predicate(ev.record))
-      .evalTap(ev => IO.delay(println(s"Received ${ev.record.key} with val ${ev.record.value}")))
-
+     .evalTap(ev => IO.delay(println(s"Received ${ev.record.key} with val ${ev.record.value}")))
 
 
   /***
@@ -61,7 +60,7 @@ class KafkaNotification[K, V](val kafkaConfig : KafkaConfig)
     producer <- producerStream[IO].using(producerSettings)
     record = ProducerRecord(kafkaConfig.topic, data._1, data._2)
     msg    = ProducerMessage.one(record)
-    result <- fs2.Stream.eval(producer.produce(msg).flatten)
+    result <- Stream.eval(producer.produce(msg).flatten)
   } yield result).compile.lastOrError
 
 
