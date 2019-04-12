@@ -4,12 +4,12 @@ import java.util.concurrent.ConcurrentHashMap
 
 import com.criteo.cuttle.Executor
 
-object WorkflowExecutorManager {
+object WorkflowSchedulerManager {
 
-  private val workflowToJob = new ConcurrentHashMap[String, Executor[FlowScheduling]]
+  private val workflowToJob = new ConcurrentHashMap[String, FlowScheduler]
 
-  def addWorkflowReference(workflowId: String, executor: Executor[FlowScheduling]) =
-    workflowToJob.putIfAbsent(workflowId, executor)
+  def putWorkflow(workflowId: String, scheduler: FlowScheduler) =
+    workflowToJob.putIfAbsent(workflowId, scheduler)
 
-  def getExecutorFromWf(workflowId: String): Executor[FlowScheduling] = workflowToJob.get(workflowId)
+  def schedulerFrom(workflowId: String): FlowScheduler = workflowToJob.get(workflowId)
 }

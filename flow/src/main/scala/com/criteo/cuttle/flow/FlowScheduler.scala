@@ -15,7 +15,7 @@ import io.circe._
 import io.circe.generic.semiauto._
 import io.circe.syntax._
 
-import scala.concurrent.Future
+import scala.concurrent.{Future, Promise}
 import scala.concurrent.stm.Txn.ExternalDecider
 import scala.concurrent.stm._
 
@@ -137,6 +137,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
   }
 
 
+
   private val queries = Queries(logger)
 
   private def runOrLogAndDie(thunk: => Unit, message: => String): Unit = {
@@ -244,7 +245,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
   private[flow] def runJobAndGetNextOnes(running : Set[RunJob],
                                          workflow: FlowWorkflow,
                                          executor: Executor[FlowScheduling],
-                                         xa : XA) : Set[RunJob] = {
+                                         xa : XA) : (Set[RunJob], Set[FlowJob]) = {
 
 
     val (completed, stillRunning) = running.partition {
@@ -277,8 +278,9 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       (newState, toRun)
     }
 
-    val newExecutions = executor.runAll(toRun)
+    val (signals, executions) = toRun.partition { case (job, _) => job.kind == SignalJob }
 
+    val newExecutions = executor.runAll(executions)
 
     atomic { implicit txn =>
       _state() = newExecutions.foldLeft(_state()) {
@@ -297,7 +299,8 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
         (execution.job, execution.context, result)
     }
 
-    statusJobs
+    val sgs = signals.map { case (j, _) => j }.toSet
+    (statusJobs, sgs)
   }
 
   override def start(jobs: Workload[FlowScheduling],
@@ -310,11 +313,12 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     val wf = initialize(jobs, xa, logger)
     def mainLoop(running: Set[RunJob]): Unit = {
 
-      val newRunning = runJobAndGetNextOnes(running, wf, executor, xa)
+      val (newRunning, signals) = runJobAndGetNextOnes(running, wf, executor, xa)
 
       if (!newRunning.isEmpty) async
       {
         val ft = Future.firstCompletedOf(newRunning.map { case (_, _, f) => f })
+        val sig = ??? // await a list of signal, use promise instead and fill the job with Future successful once he has seen the message from the stream served by the consumer
         await(ft)
       }.onComplete { f => // TODO: Fail future management
         mainLoop(newRunning)

@@ -65,7 +65,7 @@ class FlowProject(val workflowId: String,
     val scheduler = FlowScheduler(logger, workflowId)
 
     // Add executor
-    WorkflowExecutorManager.addWorkflowReference(workflowId, executor)
+    WorkflowSchedulerManager.putWorkflow(workflowId, scheduler)
 
     val startScheduler = () => {
       if (paused) {

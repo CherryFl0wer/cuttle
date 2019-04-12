@@ -3,24 +3,10 @@ package com.criteo.cuttle.examples
 import cats.effect._
 import com.criteo.cuttle.{Scheduling, _}
 import com.criteo.cuttle.flow._
-import com.criteo.cuttle.flow.signals.{KafkaConfig, KafkaNotification}
+import com.criteo.cuttle.flow.signals.{KafkaConfig, KafkaNotification, SignallingJob}
 
 import scala.concurrent.Future
 
-object SignallingJob {
-  import com.criteo.cuttle._
-
-  /**
-    * @todo Routing: success or error
-    * @todo Decide which job will be executed next
-    */
-  def kafkaSignaledJob(jobId : String, description : String, kafkaService : KafkaNotification) : Job[FlowScheduling] = {
-    Job(jobId, FlowScheduling(), description, SignalJob(List("declare-step3"))) {
-      implicit e =>
-        Future.successful(Completed)
-    }
-  }
-}
 
 object TestWorkflow extends IOApp {
 
@@ -30,9 +16,11 @@ object TestWorkflow extends IOApp {
   import io.circe.syntax._
 
   def run(args: List[String]): IO[ExitCode] = {
-    val jobNotificationService = new KafkaNotification(KafkaConfig(
+    val jobNotificationService = new KafkaNotification[String](KafkaConfig(
       groupId = "flow-signal",
       servers = List("localhost:9092")))
+
+      jobNotificationService.consume("flow-signal-topic")
 
     val machineLearningProject = FlowProject(description = "Testing code to implement flow workflow with signal") {
       booJob dependsOn (
@@ -46,14 +34,13 @@ object TestWorkflow extends IOApp {
 
     machineLearningProject.start()
 
-    jobNotificationService.push(
+    jobNotificationService.pushOne(
       topic = "flow-signal-topic",
-      key = machineLearningProject.workflowId,
-      content = "declare-step3")
+      (machineLearningProject.workflowId, "declare-step"))
 
-    // then workflow should continue with modellling job
+    // then workflow should continue with modeling job
 
-    IO.pure(ExitCode.Success)
+    IO(ExitCode.Success)
   }
 
   private val booJob = {
