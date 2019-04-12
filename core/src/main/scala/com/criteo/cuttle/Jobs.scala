@@ -37,7 +37,7 @@ case class Tag(name: String, description: String = "")
 
 sealed trait JobKind
 case object NormalJob extends JobKind
-final case class SignalJob(eventsTrigger : List[String]) extends JobKind
+final case class SignalJob(eventTrigger : String) extends JobKind
 
 final case class Job[S <: Scheduling](id: String,
                                 scheduling: S,
@@ -53,7 +53,6 @@ final case class Job[S <: Scheduling](id: String,
   private[cuttle] def run(execution: Execution[S]): Future[Completed] =
     effect(execution)
 }
-
 
 /** Companion object for [[Job]]. */
 case object Job {

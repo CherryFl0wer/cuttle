@@ -469,9 +469,6 @@ class Executor[S <: Scheduling] private[cuttle] (
     ))
 
 
-
-  private def triggerSignal(signalName : String) = ()
-
   // executions that failed recently and are now running
   private def retryingExecutions(filteredJobs: Set[String]): Seq[(Execution[S], FailingJob, ExecutionStatus)] =
     atomic { implicit txn =>
