@@ -16,11 +16,12 @@ object TestWorkflow extends IOApp {
   import io.circe.syntax._
 
   def run(args: List[String]): IO[ExitCode] = {
-    val jobNotificationService = new KafkaNotification[String](KafkaConfig(
+    val jobNotificationService = new KafkaNotification[String, String](KafkaConfig(
+      topic = "flow-signal-topic",
       groupId = "flow-signal",
       servers = List("localhost:9092")))
 
-      jobNotificationService.consume("flow-signal-topic")
+//    jobNotificationService.consume.unsafeRunAsyncAndForget()
 
     val machineLearningProject = FlowProject(description = "Testing code to implement flow workflow with signal") {
       booJob dependsOn (
@@ -34,9 +35,7 @@ object TestWorkflow extends IOApp {
 
     machineLearningProject.start()
 
-    jobNotificationService.pushOne(
-      topic = "flow-signal-topic",
-      (machineLearningProject.workflowId, "declare-step"))
+    //jobNotificationService.pushOne((machineLearningProject.workflowId, "declare-step")).unsafeRunSync()
 
     // then workflow should continue with modeling job
 

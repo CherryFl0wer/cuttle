@@ -1,39 +1,36 @@
 package com.criteo.cuttle.examples
 
-import java.util.concurrent.Executors
-
 import cats.effect.{ExitCode, IO, IOApp}
 import com.criteo.cuttle.flow.signals.{KafkaConfig, KafkaNotification}
-import cats.implicits._
-
-import scala.concurrent.ExecutionContext
+import fs2.Stream
 import scala.concurrent.duration._
-
+import cats.implicits._
 
 object TestFS2 extends IOApp {
 
   def run(args: List[String]): IO[ExitCode] = {
 
-    val topic = "flow-signal-topic"
+    val rnd = scala.util.Random
 
-    val jobNotificationService = new KafkaNotification[String](KafkaConfig(
+    val flowSignalTopic = new KafkaNotification[String, String](KafkaConfig(
+      topic = "flow-signal-topic",
       groupId = "flow-signal",
       servers = List("localhost:9092")))
 
 
-    val ecTwo = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor())
-    val csTwo = IO.contextShift(ecTwo)
+    Stream(
+      flowSignalTopic
+        .consume
+        .concurrently(
+        Stream.awakeEvery[IO](3 seconds).evalMap { n =>
+          flowSignalTopic.pushOne((s"workflow-rnd-${rnd.nextInt(2)}", s"signal-event-${n._1.toString}"))
+        })).parJoin(2).compile.drain.unsafeRunAsyncAndForget()
 
 
-    jobNotificationService.consume(topic).unsafeRunAsyncAndForget()
-    jobNotificationService.printQueue(csTwo).compile.drain.unsafeRunAsyncAndForget()
+    Stream(flowSignalTopic.subscribeTo(record => record.key == "workflow-rnd-1"))
+      .concurrently(flowSignalTopic.subscribeTo(record => record.key == "workflow-rnd-1"))
+      .parJoin(2).compile.drain.as(ExitCode.Success)
 
-    val toRun = fs2.Stream.awakeEvery[IO](1.seconds).evalMap {
-      _ =>
-        jobNotificationService.pushOne(topic, (s"workflow-rnd", s"signal-event"))
-    }.compile.drain.unsafeRunSync()
-
-
-    IO(ExitCode.Success)
-  }
+    }
 }
+

@@ -16,7 +16,7 @@ object SignallingJob {
     * @todo Decide which job will be executed next
     * @todo What to do when not consuming msg ?
     */
-  def kafkaSignaledJob(jobId : String, description : String, kafkaService : KafkaNotification[String]) : Job[FlowScheduling] = {
+  def kafkaSignaledJob(jobId : String, description : String, kafkaService : KafkaNotification[String, String]) : Job[FlowScheduling] = {
     Job(jobId, FlowScheduling(), description, SignalJob("declare-step")) { implicit e =>
       // here receive a stream of message
       // filter it
