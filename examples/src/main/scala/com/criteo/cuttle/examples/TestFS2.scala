@@ -15,7 +15,8 @@ object TestFS2 extends IOApp {
     val flowSignalTopic = new KafkaNotification[String, String](KafkaConfig(
       topic = "flow-signal-topic",
       groupId = "flow-signal",
-      servers = List("localhost:9092")))
+      servers = List("localhost:9092"),
+      offsetInterval = (500, 10.seconds)))
 
 
     val backend = for {
