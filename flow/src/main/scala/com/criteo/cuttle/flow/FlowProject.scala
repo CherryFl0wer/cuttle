@@ -67,9 +67,6 @@ class FlowProject(val workflowId: String,
     val executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, version, logsRetention)(retryStrategy)
     val scheduler = FlowScheduler(logger, workflowId)
 
-    // Add executor
-    WorkflowSchedulerManager.putWorkflow(workflowId, scheduler)
-
     val startScheduler = () => {
       if (paused) {
         logger.info("Pausing workflow")

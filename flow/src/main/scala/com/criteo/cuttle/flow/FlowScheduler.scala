@@ -192,6 +192,10 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
           }
         }
 
+    atomic { implicit txn =>
+      _pausedJobs() = _pausedJobs() ++ queries.getPausedJobs.transact(xa).unsafeRunSync()
+    }
+
     workflow
   }
 
@@ -299,7 +303,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
         (execution.job, execution.context, result)
     }
 
-   // val sgs = signals.map { case (j, _) => j }.toSet
     statusJobs
   }
 
@@ -317,7 +320,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
       if (!newRunning.isEmpty) async {
         val ft = Future.firstCompletedOf(newRunning.map { case (_, _, f) => f })
-        // await a list of signal, use promise instead and fill the job with Future successful once he has seen the message from the stream served by the consumer
         await(ft)
       }.onComplete { f => // TODO: Fail future management
         mainLoop(newRunning)

@@ -39,13 +39,11 @@ object TestWorkflow extends IOApp {
 
     machineLearningProject.start()
 
-
-    val stream = fs2.Stream.awakeEvery[IO](3.seconds).head *>
+    val stream = fs2.Stream.awakeEvery[IO](15.seconds).head *>
       flowSignalTopic.pushOne((machineLearningProject.workflowId, "trigger-next-stepu"))
 
     stream.compile.drain.unsafeRunSync()
 
-    // then workflow should continue with modeling job
     IO(ExitCode.Success)
   }
 

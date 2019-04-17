@@ -52,8 +52,6 @@ class KafkaNotification[K, V](val kafkaConfig : KafkaConfig)
       .filter(ev => predicate(ev.record))
 
 
-
-
   /***
     * pushOne data to the topic
     * @param data tuple of Key, Value

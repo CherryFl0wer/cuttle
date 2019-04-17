@@ -1,13 +1,11 @@
 package com.criteo.cuttle.flow.signals
 
-import cats.effect.{Async, Concurrent, ExitCode, IO}
+import cats.effect.{ Concurrent, IO}
 import com.criteo.cuttle.flow.FlowScheduling
 
-import scala.async.Async.{async, await}
-import scala.concurrent.{Future, Promise}
+import scala.concurrent.Promise
 
 trait JobNotification {}
-
 
 object SignallingJob {
   import com.criteo.cuttle._
@@ -22,11 +20,7 @@ object SignallingJob {
 
     Job(jobId, FlowScheduling(), s"waiting for event ${event}", SignalJob(event)) { implicit e =>
 
-      // If wfid and signal is in Then Fill the promise of the job with successfull otherwise ?
-
-      // val jobEvent = e.job.kind.asInstanceOf[SignalJob].eventTrigger // not necessary in this case
-
-      val p = Promise[Completed]()
+      val p = Promise[Unit]()
 
       e.streams.info(s"Waiting for event ${event} to be triggered in ${e.context.workflowId} by ${e.job.id}")
 
@@ -39,14 +33,14 @@ object SignallingJob {
         .onComplete { cb =>
           cb.toOption match {
             case None => sys.error("Failed job") // TODO : Not that
-            case Some(commit) => for {
-              _ <- kafkaService.pushCommit(commit.get)
-              _ <- p.success(Completed)
-            } yield ()
+            case Some(commit) =>  {
+              kafkaService.pushCommit(commit.get).unsafeRunSync() // In his own context
+              p.success(())
+            }
           }
       }
 
-      p.future
+      e.parkWhen(p.future).map(_ => Completed)
     }
   }
 }
