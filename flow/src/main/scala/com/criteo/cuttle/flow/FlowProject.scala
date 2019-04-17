@@ -7,6 +7,9 @@ import com.criteo.cuttle.{DatabaseConfig, ExecutionPlatform, Executor, Logger, R
 
 import scala.concurrent.duration.Duration
 
+/**
+  * @todo Change it to fit to Cats
+* */
 class FlowProject(val workflowId: String,
                   val version: String,
                   val description: String,

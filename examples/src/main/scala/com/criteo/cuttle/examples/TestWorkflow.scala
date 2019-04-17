@@ -1,11 +1,14 @@
 package com.criteo.cuttle.examples
 
 import cats.effect._
-import com.criteo.cuttle.{Scheduling, _}
+import cats.implicits._
+
+import com.criteo.cuttle._
 import com.criteo.cuttle.flow._
 import com.criteo.cuttle.flow.signals.{KafkaConfig, KafkaNotification, SignallingJob}
 
 import scala.concurrent.Future
+import scala.concurrent.duration._
 
 
 object TestWorkflow extends IOApp {
@@ -16,17 +19,18 @@ object TestWorkflow extends IOApp {
   import io.circe.syntax._
 
   def run(args: List[String]): IO[ExitCode] = {
-    val jobNotificationService = new KafkaNotification[String, String](KafkaConfig(
-      topic = "flow-signal-topic",
+    val flowSignalTopic = new KafkaNotification[String, String](KafkaConfig(
+      topic = "signal-flow",
       groupId = "flow-signal",
       servers = List("localhost:9092")))
 
-//    jobNotificationService.consume.unsafeRunAsyncAndForget()
+    flowSignalTopic.consume.compile
+      .drain.unsafeRunAsyncAndForget()
 
     val machineLearningProject = FlowProject(description = "Testing code to implement flow workflow with signal") {
       booJob dependsOn (
         modellingJob dependsOn (
-          dataprepJob and makeTrainJob and SignallingJob.kafkaSignaledJob("Enclenche", "desc", kafkaService = jobNotificationService)
+          dataprepJob and makeTrainJob and SignallingJob.kafkaSignaledJob("Enclenche", "trigger-next-stepu", kafkaService = flowSignalTopic)
           ) and (
           fooJob dependsOn makePredictionJob
           )
@@ -35,10 +39,13 @@ object TestWorkflow extends IOApp {
 
     machineLearningProject.start()
 
-    //jobNotificationService.pushOne((machineLearningProject.workflowId, "declare-step")).unsafeRunSync()
+
+    val stream = fs2.Stream.awakeEvery[IO](3.seconds).head *>
+      flowSignalTopic.pushOne((machineLearningProject.workflowId, "trigger-next-stepu"))
+
+    stream.compile.drain.unsafeRunSync()
 
     // then workflow should continue with modeling job
-
     IO(ExitCode.Success)
   }
 

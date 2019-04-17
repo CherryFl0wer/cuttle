@@ -31,6 +31,7 @@ class KafkaNotification[K, V](val kafkaConfig : KafkaConfig)
   type Event = Either[Unit, CommittableMessage[IO, K, V]]
 
   private val topicEvents = Topic[IO, Event](Left(())).unsafeRunSync()
+  private val subscriber = topicEvents.subscribe(10).collect { case Right(msg) => msg }
 
   private val producerSettings = ProducerSettings[K,V]
     .withBootstrapServers(kafkaConfig.serversToString)
@@ -41,32 +42,30 @@ class KafkaNotification[K, V](val kafkaConfig : KafkaConfig)
     .withGroupId(kafkaConfig.groupId)
     .withEnableAutoCommit(false)
     .withAutoOffsetReset(AutoOffsetReset.Latest)
-    .withPollTimeout(100.millisecond)
+    .withPollTimeout(500.millisecond)
 
+  def pushCommit(c : CommittableMessage[IO, K, V]) = c.committableOffset.commit
 
-  def subscribeTo(predicate : (ConsumerRecord[K,V]) => Boolean)(implicit C : Concurrent[IO]) =
-    topicEvents
-      .subscribe(10)
-      .collect { case Right(msg) => msg }
+  def subscribeTo(predicate : (ConsumerRecord[K,V]) => Boolean) =
+    subscriber
+      .evalTap(ev => IO.delay(println(s"Key = ${ev.record.key()} ; Message = ${ev.record.value()}")))
       .filter(ev => predicate(ev.record))
-      .evalTap(ev => IO.delay(println(s"Received ${ev.record.key} with val ${ev.record.value}")))
-      .map(_.committableOffset)
-      .through(commitBatch)
+
 
 
 
   /***
     * pushOne data to the topic
     * @param data tuple of Key, Value
-    * @return An IO of a producer result
+    * @return A Stream containing an IO with the result
     */
-  def pushOne(data : (K,V)) = (for {
+  def pushOne(data : (K,V)) = for {
     producer <- producerStream[IO].using(producerSettings)
     record = ProducerRecord(kafkaConfig.topic, data._1, data._2)
     msg    = ProducerMessage.one(record)
     result <- Stream.eval(producer.produce(msg).flatten)
 
-  } yield result).compile.lastOrError
+  } yield result
 
 
   /***
@@ -75,6 +74,7 @@ class KafkaNotification[K, V](val kafkaConfig : KafkaConfig)
     * @return A Stream of IO to execute the consumer stream
     */
   def consume(implicit cs : ContextShift[IO]) = for {
+
     _ <- consumerStream[IO]
       .using(consumerSettings)
       .evalTap(_.subscribeTo(kafkaConfig.topic))
