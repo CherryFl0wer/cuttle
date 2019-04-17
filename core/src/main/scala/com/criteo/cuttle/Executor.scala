@@ -469,9 +469,6 @@ class Executor[S <: Scheduling] private[cuttle] (
     ))
 
 
-
-  private def triggerSignal(signalName : String) = ()
-
   // executions that failed recently and are now running
   private def retryingExecutions(filteredJobs: Set[String]): Seq[(Execution[S], FailingJob, ExecutionStatus)] =
     atomic { implicit txn =>
@@ -924,7 +921,7 @@ class Executor[S <: Scheduling] private[cuttle] (
                       }
                       if (cancelNow) promise.tryFailure(ExecutionCancelled)
                     }
-                  case DontRun => execution.streams.error(s" Can't run this execution, stopping.") // TODO: Doing this ?
+                  case DontRun => execution.streams.error(s" Can't run this execution, stopping.")
                 }
               }
 

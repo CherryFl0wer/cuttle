@@ -7,6 +7,9 @@ import com.criteo.cuttle.{DatabaseConfig, ExecutionPlatform, Executor, Logger, R
 
 import scala.concurrent.duration.Duration
 
+/**
+  * @todo Change it to fit to Cats
+* */
 class FlowProject(val workflowId: String,
                   val version: String,
                   val description: String,
@@ -63,9 +66,6 @@ class FlowProject(val workflowId: String,
     val xa = FlowDB.connect(databaseConfig)(logger)
     val executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, version, logsRetention)(retryStrategy)
     val scheduler = FlowScheduler(logger, workflowId)
-
-    // Add executor
-    WorkflowExecutorManager.addWorkflowReference(workflowId, executor)
 
     val startScheduler = () => {
       if (paused) {

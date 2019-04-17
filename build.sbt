@@ -134,7 +134,7 @@ lazy val flow =
     .settings(commonSettings: _*)
     .settings(
       libraryDependencies ++= Seq(
-        "ch.vorburger.mariaDB4j" % "mariaDB4j" % "2.3.0" % "test"
+        "com.ovoenergy" %% "fs2-kafka" % "0.19.9"
       ))
     .dependsOn(cuttle % "compile->compile;test->test")
 

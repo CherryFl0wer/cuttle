@@ -1,36 +1,89 @@
 package com.criteo.cuttle.flow.signals
 
-import java.util
+import cats.effect._
+import cats.effect.concurrent.Ref
+import cats.implicits._
+import fs2.Stream
+import fs2.concurrent.Topic
+import fs2.kafka._
 
-import fs2.Pure
-import org.apache.kafka.clients.consumer.{ConsumerRecord, KafkaConsumer}
-import org.apache.kafka.clients.producer.{KafkaProducer, ProducerRecord}
-
+import scala.concurrent.duration._
+import org.apache.kafka.clients.consumer.ConsumerRecord
 
 /**
-  * Consumes and produces to/from Kafka
+  * Consumes from and produces data to Kafka
   * @todo analyze Signal object from fs2
   * @todo make it generic (can be something else than kafka)
-  * @todo build with a kafka config
+  * @implicit Serializer and deserializer for Key and Value
+  *           IO concurrent methods and timer
   */
-class KafkaNotification(val kafkaConfig: KafkaConfig) {
-  import scala.collection.JavaConverters._
-
-  private val producer = new KafkaProducer[String, String](kafkaConfig.producerProperties)
-  private val consumer = new KafkaConsumer[String, String](kafkaConfig.consumerProperties)
-
-  private def subscribeTo(topic : String) = consumer.subscribe(util.Collections.singletonList(topic)) // Variadic
-
-  def push(topic: String, key: String, content : String) =
-    producer.send(new ProducerRecord[String, String](topic, key, content)).isDone
 
 
-  def consume(onTopic : String, waitFor : Long = 0): fs2.Stream[Pure, ConsumerRecord[String, String]] = {
-    subscribeTo(onTopic)
+class KafkaNotification[K, V](val kafkaConfig : KafkaConfig)
+                                                 (implicit
+                                                  serializerK: Serializer[K],
+                                                  deserializerK: Deserializer[K],
+                                                  serializerV: Serializer[V],
+                                                  deserializerV: Deserializer[V],
+                                                  F : ConcurrentEffect[IO],
+                                                  timer : Timer[IO]) {
 
-    val records: Stream[ConsumerRecord[String, String]] = consumer.poll(waitFor)
-      .asScala.toStream
+  type Event = Either[Unit, CommittableMessage[IO, K, V]]
 
-    fs2.Stream.emits(records)
-  }
+  private val topicEvents = Topic[IO, Event](Left(())).unsafeRunSync()
+  private val subscriber = topicEvents.subscribe(10).collect { case Right(msg) => msg }
+
+  private val producerSettings = ProducerSettings[K,V]
+    .withBootstrapServers(kafkaConfig.serversToString)
+    .withAcks(Acks.All)
+
+  private val consumerSettings = ConsumerSettings[K,V]
+    .withBootstrapServers(kafkaConfig.serversToString)
+    .withGroupId(kafkaConfig.groupId)
+    .withEnableAutoCommit(false)
+    .withAutoOffsetReset(AutoOffsetReset.Latest)
+    .withPollTimeout(500.millisecond)
+
+  def pushCommit(c : CommittableMessage[IO, K, V]) = c.committableOffset.commit
+
+  def subscribeTo(predicate : (ConsumerRecord[K,V]) => Boolean) =
+    subscriber
+      .evalTap(ev => IO.delay(println(s"Key = ${ev.record.key()} ; Message = ${ev.record.value()}")))
+      .filter(ev => predicate(ev.record))
+
+
+  /***
+    * pushOne data to the topic
+    * @param data tuple of Key, Value
+    * @return A Stream containing an IO with the result
+    */
+  def pushOne(data : (K,V)) = for {
+    producer <- producerStream[IO].using(producerSettings)
+    record = ProducerRecord(kafkaConfig.topic, data._1, data._2)
+    msg    = ProducerMessage.one(record)
+    result <- Stream.eval(producer.produce(msg).flatten)
+
+  } yield result
+
+
+  /***
+    consume the topic
+    * @param cs context shift io
+    * @return A Stream of IO to execute the consumer stream
+    */
+  def consume(implicit cs : ContextShift[IO]) = for {
+
+    _ <- consumerStream[IO]
+      .using(consumerSettings)
+      .evalTap(_.subscribeTo(kafkaConfig.topic))
+      .flatMap(_.stream)
+      .map(Right(_))
+      .through(topicEvents.publish)
+  } yield ()
+
+
+
+
+
+
 }

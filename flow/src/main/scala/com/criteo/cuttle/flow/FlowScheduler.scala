@@ -15,7 +15,7 @@ import io.circe._
 import io.circe.generic.semiauto._
 import io.circe.syntax._
 
-import scala.concurrent.Future
+import scala.concurrent.{Future, Promise}
 import scala.concurrent.stm.Txn.ExternalDecider
 import scala.concurrent.stm._
 
@@ -137,6 +137,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
   }
 
 
+
   private val queries = Queries(logger)
 
   private def runOrLogAndDie(thunk: => Unit, message: => String): Unit = {
@@ -190,6 +191,10 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
             implicit txn => _state() = state
           }
         }
+
+    atomic { implicit txn =>
+      _pausedJobs() = _pausedJobs() ++ queries.getPausedJobs.transact(xa).unsafeRunSync()
+    }
 
     workflow
   }
@@ -277,8 +282,9 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       (newState, toRun)
     }
 
-    val newExecutions = executor.runAll(toRun)
+    //val (signals, executions) = toRun.partition { case (job, _) => job.kind == SignalJob }
 
+    val newExecutions = executor.runAll(toRun)
 
     atomic { implicit txn =>
       _state() = newExecutions.foldLeft(_state()) {
@@ -312,8 +318,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
       val newRunning = runJobAndGetNextOnes(running, wf, executor, xa)
 
-      if (!newRunning.isEmpty) async
-      {
+      if (!newRunning.isEmpty) async {
         val ft = Future.firstCompletedOf(newRunning.map { case (_, _, f) => f })
         await(ft)
       }.onComplete { f => // TODO: Fail future management
