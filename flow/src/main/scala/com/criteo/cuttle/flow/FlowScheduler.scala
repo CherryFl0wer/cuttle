@@ -167,7 +167,9 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
   private[flow] def initialize(wf : Workload[FlowScheduling], xa : XA, logger : Logger) = {
     val workflow = wf.asInstanceOf[FlowWorkflow]
+
     logger.info("Validate flow workflow before start")
+
     FlowSchedulerUtils.validate(workflow) match {
       case Left(errors) =>
         val consolidatedError = errors.mkString("\n")
@@ -175,6 +177,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
         throw new IllegalArgumentException(consolidatedError)
       case Right(_) => ()
     }
+
     logger.info("Flow Workflow is valid")
 
     logger.info("Applying migrations to database")
@@ -281,8 +284,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
       (newState, toRun)
     }
-
-    //val (signals, executions) = toRun.partition { case (job, _) => job.kind == SignalJob }
 
     val newExecutions = executor.runAll(toRun)
 

@@ -24,8 +24,11 @@ object TestWorkflow extends IOApp {
       groupId = "flow-signal",
       servers = List("localhost:9092")))
 
-    flowSignalTopic.consume.compile
-      .drain.unsafeRunAsyncAndForget()
+    flowSignalTopic
+      .consume
+      .compile
+      .drain
+      .unsafeRunAsyncAndForget()
 
     val machineLearningProject = FlowProject(description = "Testing code to implement flow workflow with signal") {
       booJob dependsOn (
@@ -37,14 +40,13 @@ object TestWorkflow extends IOApp {
         )
     }
 
-    machineLearningProject.start()
-
     val stream = fs2.Stream.awakeEvery[IO](15.seconds).head *>
       flowSignalTopic.pushOne((machineLearningProject.workflowId, "trigger-next-stepu"))
 
-    stream.compile.drain.unsafeRunSync()
+    stream.compile.drain.unsafeRunAsyncAndForget()
 
-    IO(ExitCode.Success)
+
+    machineLearningProject.start().as(ExitCode.Success)
   }
 
   private val booJob = {

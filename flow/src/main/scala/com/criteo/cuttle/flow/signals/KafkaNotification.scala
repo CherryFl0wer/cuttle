@@ -1,7 +1,7 @@
 package com.criteo.cuttle.flow.signals
 
+import cats.data.EitherT
 import cats.effect._
-import cats.effect.concurrent.Ref
 import cats.implicits._
 import fs2.Stream
 import fs2.concurrent.Topic
@@ -9,6 +9,9 @@ import fs2.kafka._
 
 import scala.concurrent.duration._
 import org.apache.kafka.clients.consumer.ConsumerRecord
+import org.apache.kafka.common.TopicPartition
+
+import scala.collection.immutable.Stream.cons
 
 /**
   * Consumes from and produces data to Kafka
@@ -25,13 +28,18 @@ class KafkaNotification[K, V](val kafkaConfig : KafkaConfig)
                                                   deserializerK: Deserializer[K],
                                                   serializerV: Serializer[V],
                                                   deserializerV: Deserializer[V],
+                                                  cs : ContextShift[IO],
                                                   F : ConcurrentEffect[IO],
                                                   timer : Timer[IO]) {
 
   type Event = Either[Unit, CommittableMessage[IO, K, V]]
 
   private val topicEvents = Topic[IO, Event](Left(())).unsafeRunSync()
-  private val subscriber = topicEvents.subscribe(10).collect { case Right(msg) => msg }
+  private val subscriber = topicEvents.subscribe(100)
+
+  private val consumer = consumerStream[IO]
+    .using(consumerSettings)
+    .evalTap(_.subscribeTo(kafkaConfig.topic))
 
   private val producerSettings = ProducerSettings[K,V]
     .withBootstrapServers(kafkaConfig.serversToString)
@@ -44,11 +52,27 @@ class KafkaNotification[K, V](val kafkaConfig : KafkaConfig)
     .withAutoOffsetReset(AutoOffsetReset.Latest)
     .withPollTimeout(500.millisecond)
 
-  def pushCommit(c : CommittableMessage[IO, K, V]) = c.committableOffset.commit
+  /***
+    consume the topic
+    * @param cs context shift io
+    * @return A Stream of IO to execute the consumer stream
+    */
+  def consume = consumerStream[IO]
+    .using(consumerSettings)
+    .evalTap(_.subscribeTo(kafkaConfig.topic))
+    .flatMap(_.stream)
+    .map(Right(_))
+    .through(topicEvents.publish)
+    .map(_ => ())
 
+  /**
+    *
+    * @param predicate filter the topic with messages corresponding
+    * @return
+    */
   def subscribeTo(predicate : (ConsumerRecord[K,V]) => Boolean) =
     subscriber
-      .evalTap(ev => IO.delay(println(s"Key = ${ev.record.key()} ; Message = ${ev.record.value()}")))
+      .collect { case Right(msg) => msg }
       .filter(ev => predicate(ev.record))
 
 
@@ -64,26 +88,5 @@ class KafkaNotification[K, V](val kafkaConfig : KafkaConfig)
     result <- Stream.eval(producer.produce(msg).flatten)
 
   } yield result
-
-
-  /***
-    consume the topic
-    * @param cs context shift io
-    * @return A Stream of IO to execute the consumer stream
-    */
-  def consume(implicit cs : ContextShift[IO]) = for {
-
-    _ <- consumerStream[IO]
-      .using(consumerSettings)
-      .evalTap(_.subscribeTo(kafkaConfig.topic))
-      .flatMap(_.stream)
-      .map(Right(_))
-      .through(topicEvents.publish)
-  } yield ()
-
-
-
-
-
 
 }

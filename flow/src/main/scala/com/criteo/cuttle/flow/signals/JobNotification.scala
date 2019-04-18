@@ -1,6 +1,6 @@
 package com.criteo.cuttle.flow.signals
 
-import cats.effect.{ Concurrent, IO}
+import cats.effect.{Async, Concurrent, ContextShift, IO}
 import com.criteo.cuttle.flow.FlowScheduling
 
 import scala.concurrent.Promise
@@ -16,14 +16,13 @@ object SignallingJob {
     * @todo What to do when not consuming msg ?
     */
   def kafkaSignaledJob(jobId : String, event : String, kafkaService : KafkaNotification[String, String])
-                      (implicit F : Concurrent[IO]): Job[FlowScheduling] = {
+                      (implicit F : Concurrent[IO], cs : ContextShift[IO]): Job[FlowScheduling] = {
 
     Job(jobId, FlowScheduling(), s"waiting for event ${event}", SignalJob(event)) { implicit e =>
 
       val p = Promise[Unit]()
 
       e.streams.info(s"Waiting for event ${event} to be triggered in ${e.context.workflowId} by ${e.job.id}")
-
       kafkaService
         .subscribeTo(record => record.key == e.context.workflowId && record.value == event)
         .head
@@ -34,13 +33,13 @@ object SignallingJob {
           cb.toOption match {
             case None => sys.error("Failed job") // TODO : Not that
             case Some(commit) =>  {
-              kafkaService.pushCommit(commit.get).unsafeRunSync() // In his own context
+              commit.get.committableOffset.commit.unsafeRunSync() // In his own context
               p.success(())
             }
           }
-      }
+        }
 
-      e.parkWhen(p.future).map(_ => Completed)
+      p.future.map(_ => Completed)
     }
   }
 }

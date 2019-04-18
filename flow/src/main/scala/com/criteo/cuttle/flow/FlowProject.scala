@@ -3,6 +3,7 @@ package com.criteo.cuttle.flow
 import java.time.Instant
 import java.util.UUID
 
+import cats.effect.{Concurrent, IO}
 import com.criteo.cuttle.{DatabaseConfig, ExecutionPlatform, Executor, Logger, RetryStrategy, Scheduling, platforms, Database => FlowDB}
 
 import scala.concurrent.duration.Duration
@@ -35,12 +36,8 @@ class FlowProject(val workflowId: String,
              stateRetention: Option[Duration] = None,
              logsRetention: Option[Duration] = None,
              maxVersionsHistory: Option[Int] = None
-           ): Unit = {
-    val startScheduler = build(platforms, retryStrategy, databaseConfig, paused, logsRetention)
-
-    logger.info(s"Running cuttle flow graph")
-
-    startScheduler()
+           ): IO[Unit] = {
+    build(platforms, retryStrategy, databaseConfig, paused, logsRetention)
   }
 
   /**
@@ -50,9 +47,7 @@ class FlowProject(val workflowId: String,
     * @param databaseConfig JDBC configuration for MySQL server 5.7.
     * @param retryStrategy The strategy to use for execution retry. Default to exponential backoff.
     * @param paused Automatically pause all jobs at startup.
-    * @param stateRetention If specified, automatically clean the flow state older than the given duration. @unused
     * @param logsRetention If specified, automatically clean the execution logs older than the given duration. @unused
-    * @param maxVersionsHistory If specified keep only the version information for the x latest versions. @unused
     *
     * @return a function to start the scheduler
     */
@@ -62,18 +57,18 @@ class FlowProject(val workflowId: String,
              databaseConfig: DatabaseConfig,
              paused: Boolean = false,
              logsRetention: Option[Duration] = None
-           ):  () => Unit = {
+           ) :  IO[Unit] = {
     val xa = FlowDB.connect(databaseConfig)(logger)
     val executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, version, logsRetention)(retryStrategy)
     val scheduler = FlowScheduler(logger, workflowId)
 
-    val startScheduler = () => {
+    val startScheduler = IO {
       if (paused) {
         logger.info("Pausing workflow")
-        scheduler.pauseJobs(jobs.all, executor, xa)
+        scheduler.pauseJobs(jobs.all, null, xa)
       }
       logger.info("Start workflow")
-      scheduler.start(jobs, executor, xa, logger)
+      scheduler.start(jobs, null, xa, logger)
     }
 
     startScheduler
