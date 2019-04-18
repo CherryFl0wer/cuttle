@@ -18,35 +18,44 @@ object TestWorkflow extends IOApp {
   import io.circe.parser.parse
   import io.circe.syntax._
 
-  def run(args: List[String]): IO[ExitCode] = {
-    val flowSignalTopic = new KafkaNotification[String, String](KafkaConfig(
-      topic = "signal-flow",
-      groupId = "flow-signal",
-      servers = List("localhost:9092")))
+  private val flowSignalTopic = new KafkaNotification[String, String](KafkaConfig(
+    topic = "signal-flow",
+    groupId = "flow-signal",
+    servers = List("localhost:9092")))
 
-    flowSignalTopic
+  def run(args: List[String]): IO[ExitCode] = {
+
+   /* flowSignalTopic
       .consume
       .compile
       .drain
-      .unsafeRunAsyncAndForget()
+      .unsafeRunAsyncAndForget()*/
 
-    val machineLearningProject = FlowProject(description = "Testing code to implement flow workflow with signal") {
-      booJob dependsOn (
-        modellingJob dependsOn (
-          dataprepJob and makeTrainJob and SignallingJob.kafkaSignaledJob("Enclenche", "trigger-next-stepu", kafkaService = flowSignalTopic)
-          ) and (
-          fooJob dependsOn makePredictionJob
-          )
+
+    val qkJob = jobs(3)
+
+    project(qkJob(0) <-- (qkJob(1) :: qkJob(2) :: dataprepJob)).as(ExitCode.Success)
+  }
+
+  private def pushOnce(msg : (String,String), duration : FiniteDuration) =   //(workflowML.workflowId, "trigger-next-stepu")
+    fs2.Stream.awakeEvery[IO](duration).head *>
+    flowSignalTopic.pushOne(msg)
+
+
+  private def project(jobs : FlowWorkflow) = FlowProject()(jobs).start()
+
+  private def jobs(howMuch : Int): Vector[Job[FlowScheduling]] = Vector.tabulate(howMuch)(i =>
+    Job(i.toString, FlowScheduling())((_: Execution[_]) => Future.successful(Completed))
+  )
+
+  private val workflowML = FlowProject(description = "Testing code to implement flow workflow with signal") {
+    booJob dependsOn (
+      modellingJob dependsOn (
+        dataprepJob and makeTrainJob and SignallingJob.kafkaSignaledJob("Enclenche", "trigger-next-stepu", kafkaService = flowSignalTopic)
+        ) and (
+        fooJob dependsOn makePredictionJob
         )
-    }
-
-    val stream = fs2.Stream.awakeEvery[IO](15.seconds).head *>
-      flowSignalTopic.pushOne((machineLearningProject.workflowId, "trigger-next-stepu"))
-
-    stream.compile.drain.unsafeRunAsyncAndForget()
-
-
-    machineLearningProject.start().as(ExitCode.Success)
+      )
   }
 
   private val booJob = {

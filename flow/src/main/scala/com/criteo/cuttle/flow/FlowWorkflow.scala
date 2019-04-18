@@ -54,6 +54,9 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     *
     * @param otherWorflow The workflow to compose this workflow with.
     */
+
+  def ::(other : FlowWorkflow) : FlowWorkflow = and(other)
+
   def and(otherWorflow: FlowWorkflow): FlowWorkflow = {
     val leftWorkflow = this
     new FlowWorkflow {
@@ -83,6 +86,9 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     *
     * @param rightOperand The workflow to compose this workflow with.
     */
+
+  def <--(right : FlowWorkflow) : FlowWorkflow = dependsOn(right)
+
   def dependsOn(rightWorkflow: FlowWorkflow): FlowWorkflow = {
     val leftWorkflow = this
     val newEdges: Set[Dependency] = for {

@@ -30,7 +30,7 @@ class FlowProject(val workflowId: String,
     */
   def start(
              platforms: Seq[ExecutionPlatform] = FlowProject.defaultPlatforms,
-             retryStrategy: RetryStrategy = RetryStrategy.ExponentialBackoffRetryStrategy,
+             retryStrategy: Option[RetryStrategy] = None,
              paused: Boolean = false,
              databaseConfig: DatabaseConfig = DatabaseConfig.fromEnv,
              stateRetention: Option[Duration] = None,
@@ -53,7 +53,7 @@ class FlowProject(val workflowId: String,
     */
   def build(
              platforms: Seq[ExecutionPlatform] = FlowProject.defaultPlatforms,
-             retryStrategy: RetryStrategy = RetryStrategy.NoRetryStrategy,
+             retryStrategy: Option[RetryStrategy] = None,
              databaseConfig: DatabaseConfig,
              paused: Boolean = false,
              logsRetention: Option[Duration] = None
@@ -72,6 +72,7 @@ class FlowProject(val workflowId: String,
     }
 
     startScheduler
+    IO.unit
   }
 }
 

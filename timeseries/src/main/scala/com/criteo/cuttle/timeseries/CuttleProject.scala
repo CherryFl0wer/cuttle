@@ -73,7 +73,7 @@ class CuttleProject private[cuttle] (val name: String,
     maxVersionsHistory: Option[Int] = None
   ): (TimeSeriesApp, () => Unit) = {
     val xa = CuttleDatabase.connect(databaseConfig)(logger)
-    val executor = new Executor[TimeSeries](platforms, xa, logger, name, version, logsRetention)(retryStrategy)
+    val executor = new Executor[TimeSeries](platforms, xa, logger, name, version, logsRetention)(Some(retryStrategy))
     val scheduler = new TimeSeriesScheduler(logger, stateRetention, maxVersionsHistory)
 
     val startScheduler = () => {

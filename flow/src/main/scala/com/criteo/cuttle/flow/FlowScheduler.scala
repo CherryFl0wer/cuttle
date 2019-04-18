@@ -137,7 +137,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
   }
 
 
-
   private val queries = Queries(logger)
 
   private def runOrLogAndDie(thunk: => Unit, message: => String): Unit = {
@@ -366,8 +365,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
   }
 
 }
-
-
 
 
 

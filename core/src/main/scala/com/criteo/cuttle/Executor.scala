@@ -50,6 +50,7 @@ trait RetryStrategy {
 
   /** The retry window considere by this strategy. */
   def retryWindow: Duration
+
 }
 
 /** Built-in [[RetryStrategy]] */
@@ -62,11 +63,6 @@ object RetryStrategy {
       retryWindow.multipliedBy(math.pow(2, previouslyFailing.size - 1).toLong)
     def retryWindow =
       Duration.ofMinutes(5)
-  }
-
-  def NoRetryStrategy = new RetryStrategy {
-    def apply[S <: Scheduling](job: Job[S], context: S#Context, previouslyFailing: List[String]): Duration = retryWindow
-    def retryWindow: Duration = Duration.ZERO
   }
 
   /** Simple retry strategy. Retry after the constant retry window.
@@ -444,7 +440,7 @@ class Executor[S <: Scheduling] private[cuttle] (
   logger: Logger,
   val projectName: String,
   val projectVersion: String,
-  logsRetention: Option[ScalaDuration] = None)(implicit retryStrategy: RetryStrategy)
+  logsRetention: Option[ScalaDuration] = None)(implicit retryStrategy: Option[RetryStrategy])
     extends MetricProvider[S]  {
 
   import ExecutionStatus._
@@ -452,7 +448,7 @@ class Executor[S <: Scheduling] private[cuttle] (
 
   private implicit val contextOrdering: Ordering[S#Context] = Ordering.by(c => c: SchedulingContext)
 
-  private val queries = Queries(logger)
+  private val queries: Queries = Queries(logger)
 
   // TODO: move to the scheduler
   private[cuttle] val runningState = TMap.empty[Execution[S], Future[Completed]]
@@ -461,7 +457,11 @@ class Executor[S <: Scheduling] private[cuttle] (
 
   // signals whether the instance is shutting down
   private val isShuttingDown: Ref[Boolean] = Ref(false)
-  private val timer = new Timer("com.criteo.cuttle.Executor.timer")
+  private def timer = {
+    if (retryStrategy.isDefined) Some(new Timer("com.criteo.cuttle.Executor.timer"))
+    else None
+  }
+
   private val executionsCounters: Ref[Counter[Long]] = Ref(
     Counter[Long](
       "cuttle_executions_total",
@@ -500,6 +500,7 @@ class Executor[S <: Scheduling] private[cuttle] (
 
       recentFailures.count({ case ((job, context), _) => runningIds.contains((job.id, context)) })
     }
+
 
   private def startMonitoringExecutions() = {
     val intervalSeconds = 1
@@ -746,7 +747,7 @@ class Executor[S <: Scheduling] private[cuttle] (
                 recentFailures.retain {
                   case (_, (retryExecution, failingJob)) =>
                     retryExecution.isDefined || failingJob.isLastFailureAfter(
-                      Instant.now.minus(retryStrategy.retryWindow))
+                      Instant.now.minus(retryStrategy.get.retryWindow))
                 }
                 val failureKey = (execution.job, execution.context)
                 val failingJob = recentFailures.get(failureKey).map(_._2).getOrElse(FailingJob(Nil, None))
@@ -860,10 +861,11 @@ class Executor[S <: Scheduling] private[cuttle] (
                   val promise = Promise[Completed]
 
                   if (recentFailures.contains(job -> context)) {
-                    if (retryStrategy.retryWindow != Duration.ZERO) {
+                    if (retryStrategy.isDefined) {
                       val (_, failingJob) = recentFailures(job -> context)
                       recentFailures += ((job -> context) -> (Some(execution) -> failingJob))
-                      val retryInterval = retryStrategy(job, context, previousFailures.map(_.id))
+                      val strategy = retryStrategy.get
+                      val retryInterval = strategy(job, context, previousFailures.map(_.id))
                       val launchDate = failingJob.failedExecutions.head.endTime.get.plus(retryInterval)
                       throttledState += (execution -> ((promise, failingJob.copy(nextRetry = Some(launchDate)))))
                       (job, execution, promise, Throttled(launchDate))
@@ -888,38 +890,45 @@ class Executor[S <: Scheduling] private[cuttle] (
                   case ToRunNow =>
                     unsafeDoRun(execution, promise)
                   case Throttled(launchDate) =>
-                    execution.streams.debug(s"Delayed until $launchDate because previous execution failed")
-                    val timerTask = new TimerTask {
-                      def run = {
-                        val runNow = atomic { implicit tx =>
-                          if (throttledState.contains(execution)) {
+
+                    if (timer.isDefined) { // If there is a retryExecution
+
+                      execution.streams.debug(s"Delayed until $launchDate because previous execution failed")
+
+                      val timerTask = new TimerTask {
+                        def run = {
+                          val runNow = atomic { implicit tx =>
+                            if (throttledState.contains(execution)) {
+                              throttledState -= execution
+                              addExecution2RunningState(execution, promise)
+                              true
+                            } else {
+                              false
+                            }
+                          }
+                          if (runNow) unsafeDoRun(execution, promise)
+                        }
+                      }
+
+                      timer.get.schedule(timerTask, java.util.Date.from(launchDate.atZone(ZoneId.systemDefault()).toInstant))
+
+                      execution.onCancel { () =>
+                        val cancelNow = atomic { implicit tx =>
+                          val failureKey = (execution.job -> execution.context)
+                          recentFailures.get(failureKey).foreach {
+                            case (_, failingJob) =>
+                              recentFailures += (failureKey -> (None -> failingJob))
+                          }
+                          val isStillDelayed = throttledState.contains(execution)
+                          if (isStillDelayed) {
                             throttledState -= execution
-                            addExecution2RunningState(execution, promise)
                             true
                           } else {
                             false
                           }
                         }
-                        if (runNow) unsafeDoRun(execution, promise)
+                        if (cancelNow) promise.tryFailure(ExecutionCancelled)
                       }
-                    }
-                    timer.schedule(timerTask, java.util.Date.from(launchDate.atZone(ZoneId.systemDefault()).toInstant))
-                    execution.onCancel { () =>
-                      val cancelNow = atomic { implicit tx =>
-                        val failureKey = (execution.job -> execution.context)
-                        recentFailures.get(failureKey).foreach {
-                          case (_, failingJob) =>
-                            recentFailures += (failureKey -> (None -> failingJob))
-                        }
-                        val isStillDelayed = throttledState.contains(execution)
-                        if (isStillDelayed) {
-                          throttledState -= execution
-                          true
-                        } else {
-                          false
-                        }
-                      }
-                      if (cancelNow) promise.tryFailure(ExecutionCancelled)
                     }
                   case DontRun => execution.streams.error(s" Can't run this execution, stopping.")
                 }
