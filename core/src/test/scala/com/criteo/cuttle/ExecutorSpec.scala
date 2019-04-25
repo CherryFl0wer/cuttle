@@ -36,7 +36,7 @@ class ExecutorSpec extends FunSuite with TestScheduling {
       logger,
       "project_name",
       "test_version"
-    )(RetryStrategy.ExponentialBackoffRetryStrategy)
+    )(Some(RetryStrategy.ExponentialBackoffRetryStrategy))
 
     testExecutor.updateFinishedExecutionCounters(buildExecutionForJob(fooJob), "success")
     testExecutor.updateFinishedExecutionCounters(buildExecutionForJob(fooJob), "success")

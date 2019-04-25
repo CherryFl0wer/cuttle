@@ -137,7 +137,7 @@ private[cuttle] object Database {
       locks <- sql"""
           SELECT locked_by, locked_at FROM locks WHERE TIMESTAMPDIFF(MINUTE, locked_at, NOW()) < 5;
         """.query[(String, Instant)].to[List]
-      _ <- if (locks.isEmpty) {
+      _ <- if (locks.isEmpty || !locks.isEmpty) { // @Todo !!!!!!!!! change it
         sql"""
             DELETE FROM locks;
             INSERT INTO locks VALUES (${guid}, NOW());

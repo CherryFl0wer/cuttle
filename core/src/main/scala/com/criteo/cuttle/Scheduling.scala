@@ -6,6 +6,7 @@ import cats.free._
 import java.util.Comparator
 
 import Metrics.MetricProvider
+import cats.effect.Concurrent
 
 
 
@@ -25,9 +26,10 @@ trait Scheduler[S <: Scheduling] extends MetricProvider[S] {
     * @param jobs The jobs to run.
     * @param executor The executor to use to run the generated [[Execution Executions]].
     * @param xa The doobie transactor to use to persist the scheduler state if needed.
-    * @param logger The logger to use to log internal debug state if neeed.
+    * @param logger The logger to use to log internal debug state if needed.
     */
   def start(jobs: Workload[S], executor: Executor[S], xa: XA, logger: Logger): Unit
+
 
   /** Provide a doobie SQL `Fragment` used to retrieve all execution contexts from
     * the execution logs.
@@ -46,7 +48,7 @@ trait Scheduler[S <: Scheduling] extends MetricProvider[S] {
 }
 
 /** A scheduling context is the input given to each [[Execution]] that will be created
-  * for a given [[Scheduling]]. For example, for a [[timeseries.TimeSeries TimeSeries]] scheduling the context
+  * for a given [[Scheduling]]. For example, for a [[com.criteo.cuttle.timeseries.TimeSeries TimeSeries]] scheduling the context
   * contain the time partition for which the job is running. */
 trait SchedulingContext {
 
