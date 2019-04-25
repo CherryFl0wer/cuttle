@@ -2,7 +2,6 @@ package com.criteo.cuttle.examples
 
 import cats.effect._
 import cats.implicits._
-
 import com.criteo.cuttle._
 import com.criteo.cuttle.flow._
 import com.criteo.cuttle.flow.signals.{KafkaConfig, KafkaNotification, SignallingJob}
@@ -32,17 +31,21 @@ object TestWorkflow extends IOApp {
       .unsafeRunAsyncAndForget()*/
 
 
-    val qkJob = jobs(3)
+    val qkJob = jobs(10)
 
-    project(qkJob(0) <-- (qkJob(1) :: qkJob(2) :: dataprepJob)).as(ExitCode.Success)
+    val run = project(qkJob(0) <-- (qkJob(1) || qkJob(2) || dataprepJob)).start[IO]()
+    val list = run.compile.toList.unsafeRunSync
+    list.foreach(p => println(p))
+
+    IO(ExitCode.Success)
   }
 
-  private def pushOnce(msg : (String,String), duration : FiniteDuration) =   //(workflowML.workflowId, "trigger-next-stepu")
+  //@msg = (workflowML.workflowId, "trigger-next-stepu")
+  private def pushOnce(msg : (String, String), duration : FiniteDuration) =
     fs2.Stream.awakeEvery[IO](duration).head *>
     flowSignalTopic.pushOne(msg)
 
-
-  private def project(jobs : FlowWorkflow) = FlowProject()(jobs).start()
+  private def project(jobs : FlowWorkflow) = FlowProject()(jobs)
 
   private def jobs(howMuch : Int): Vector[Job[FlowScheduling]] = Vector.tabulate(howMuch)(i =>
     Job(i.toString, FlowScheduling())((_: Execution[_]) => Future.successful(Completed))
@@ -51,7 +54,7 @@ object TestWorkflow extends IOApp {
   private val workflowML = FlowProject(description = "Testing code to implement flow workflow with signal") {
     booJob dependsOn (
       modellingJob dependsOn (
-        dataprepJob and makeTrainJob and SignallingJob.kafkaSignaledJob("Enclenche", "trigger-next-stepu", kafkaService = flowSignalTopic)
+        dataprepJob and makeTrainJob and SignallingJob.kafka("Enclenche", "trigger-next-stepu", kafkaService = flowSignalTopic)
         ) and (
         fooJob dependsOn makePredictionJob
         )
