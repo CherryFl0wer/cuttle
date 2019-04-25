@@ -55,7 +55,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     * @param otherWorflow The workflow to compose this workflow with.
     */
 
-  def ::(other : FlowWorkflow) : FlowWorkflow = and(other)
+  def ||(other : FlowWorkflow) : FlowWorkflow = and(other)
 
   def and(otherWorflow: FlowWorkflow): FlowWorkflow = {
     val leftWorkflow = this

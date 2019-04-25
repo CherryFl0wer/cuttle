@@ -1,116 +1,18 @@
 package com.criteo.cuttle.flow
 
-import java.time.{Instant, ZoneId}
-import java.util.{Comparator, UUID}
-
-import cats._
+import java.time.{Instant}
+import cats.effect.{Async, IO, Concurrent, Sync}
 import cats.implicits._
 import com.criteo.cuttle.ThreadPools.Implicits.sideEffectThreadPool
 import com.criteo.cuttle.ThreadPools._
 import com.criteo.cuttle._
-import com.criteo.cuttle.flow.FlowSchedulerUtils._
-import doobie.free.connection.ConnectionIO
 import doobie.implicits._
 import io.circe._
-import io.circe.generic.semiauto._
 import io.circe.syntax._
 
-import scala.concurrent.{Future, Promise}
+import scala.concurrent.{Future}
 import scala.concurrent.stm.Txn.ExternalDecider
 import scala.concurrent.stm._
-
-case class FlowSchedulerContext(start : Instant,
-                                projectVersion: String = "",
-                                workflowId : String,
-                                resultsFromPreviousNodes : Map[String, Json] = Map.empty) extends SchedulingContext {
-
-  var result : Json = Json.Null // Response of the job that will be saved in the database and store in a map during exec
-
-  override def asJson: Json = FlowSchedulerContext.encoder(this)
-
-  override def logIntoDatabase: ConnectionIO[String] = Database.serializeContext(this)
-
-  def toId: String = s"${start}-${workflowId}-${UUID.randomUUID().toString}"
-
-  def compareTo(other: SchedulingContext) = other match {
-    case FlowSchedulerContext(timestamp, _, _, _) => start.compareTo(timestamp) // Priority compare
-  }
-
-}
-
-
-// Decoder / Encoder
-object FlowSchedulerContext {
-
-  implicit val encodeInstant: Encoder[Instant] = Encoder.encodeString.contramap[Instant](_.toString)
-
-  implicit val decodeInstant: Decoder[Instant] = Decoder.decodeString.emap { str =>
-    Either.catchNonFatal(Instant.parse(str)).leftMap(t => "Instant")
-  }
-
-  private[flow] implicit val encoder: Encoder[FlowSchedulerContext] = new Encoder[FlowSchedulerContext] {
-    override def apply(a: FlowSchedulerContext): Json = {
-      Json.obj(
-        "startAt" -> a.start.asJson,
-        "workflowId" -> a.workflowId.asJson,
-        "projectVersion" -> a.projectVersion.asJson,
-        "cascadingResults" -> a.resultsFromPreviousNodes.asJson
-      )
-    }
-  }
-  private[flow] implicit def decoder(implicit jobs: Set[FlowJob]): Decoder[FlowSchedulerContext] = deriveDecoder
-
-  /** Provide an implicit `Ordering` for [[FlowSchedulerContext]] based on the `compareTo` function. */
-  implicit val ordering: Ordering[FlowSchedulerContext] =
-    Ordering.comparatorToOrdering(new Comparator[FlowSchedulerContext] {
-      def compare(o1: FlowSchedulerContext, o2: FlowSchedulerContext) = o1.compareTo(o2)
-    })
-}
-
-
-
-/**
-  * A [[FlowScheduling]] has a role of defining the configuration of the scheduler
-  * @param inputs Supposed to be the params that can be used inside a job
-  *               Currently defined by a string containing a parsable json object
-  */
-case class FlowScheduling(inputs : Option[String] = None) extends Scheduling {
-
-  type Context = FlowSchedulerContext
-
-  override def asJson: Json = Json.obj(
-    "kind" -> "flow".asJson,
-    "inputs" -> inputs.asJson
-  )
-}
-
-private[flow] sealed trait JobFlowState
-private[flow] case class Done(projectVersion: String) extends JobFlowState
-private[flow] case class Running(executionId: String) extends JobFlowState
-
-private[flow] object JobFlowState {
-  implicit val doneEncoder: Encoder[Done] = new Encoder[Done] {
-    def apply(done: Done) =
-      Json.obj(
-        "v" -> done.projectVersion.asJson
-      )
-  }
-
-  implicit val doneDecoder: Decoder[Done] = new Decoder[Done] {
-    def apply(c: HCursor): Decoder.Result[Done] =
-      for {
-        version <- c.downField("v").as[String]
-          .orElse(c.downField("projectVersion").as[String])
-          .orElse(Right("no-version"))
-      } yield Done(version)
-  }
-
-
-  implicit val encoder: Encoder[JobFlowState] = deriveEncoder
-  implicit def decoder(implicit jobs: Set[JobFlowState]): Decoder[JobFlowState] = deriveDecoder
-  implicit val eqInstance: Eq[JobFlowState] = Eq.fromUniversalEquals[JobFlowState]
-}
-
 
 
 
@@ -136,9 +38,11 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     _pausedJobs()
   }
 
-
   private val queries = Queries(logger)
 
+
+
+  // @TODO Not exiting savagely
   private def runOrLogAndDie(thunk: => Unit, message: => String): Unit = {
     import java.io._
 
@@ -189,10 +93,10 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       .transact(xa)
       .unsafeRunSync
       .foreach {
-          state => atomic {
-            implicit txn => _state() = state
-          }
+        state => atomic {
+          implicit txn => _state() = state
         }
+      }
 
     atomic { implicit txn =>
       _pausedJobs() = _pausedJobs() ++ queries.getPausedJobs.transact(xa).unsafeRunSync()
@@ -201,6 +105,14 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     workflow
   }
 
+
+  /***
+    * @summary Select the jobs that will run
+    * @param workflow ..
+    * @param executor ..
+    * @param state ..
+    * @return A sequence of executable jobs
+    */
 
   private[flow] def jobsToRun(workflow: FlowWorkflow,
                               executor: Executor[FlowScheduling],
@@ -212,9 +124,9 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       nextJobs
         .filter { job =>
           workflow.edges
-          .filter { case (parent, _) => parent == job }
-          .foldLeft(true)( (acc, edge) => acc && !runningJobs.contains(edge._2))
-      }
+            .filter { case (parent, _) => parent == job }
+            .foldLeft(true)( (acc, edge) => acc && !runningJobs.contains(edge._2))
+        }
 
 
     val toRun = jobsAllowedToRun(newWorkflow.roots, currentJobsRunning(state)).map { j =>
@@ -236,7 +148,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     * @param xa doobie sql
     * @summary Save job's result in the database and in a map inmemory.
     *         the map is here to avoid seeking for the result in the db every time we need it
-  * */
+    * */
   private def saveResult(job : FlowJob, context : FlowSchedulerContext, xa : XA) = {
     Database.insertResult(workflowdId, job.id,  job.scheduling.inputs.asJson, context.result)
       .transact(xa)
@@ -248,10 +160,16 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
   }
 
 
-  private[flow] def runJobAndGetNextOnes(running : Set[RunJob],
-                                         workflow: FlowWorkflow,
-                                         executor: Executor[FlowScheduling],
-                                         xa : XA) : Set[RunJob] = {
+  /**
+    * @param workflow Workflow used to get the next jobs to run
+    * @param executor Execute the side effect of a job
+    * @param xa doobie sql
+    * @param running Set of current job running (can have completed jobs)
+    * @summary Run the jobs and update state of the scheduler
+    * */
+  private[flow] def runJobs(workflow: FlowWorkflow,
+                            executor: Executor[FlowScheduling],
+                            xa : XA, running : Set[RunJob]) : Set[RunJob] = {
 
 
     val (completed, stillRunning) = running.partition {
@@ -262,9 +180,9 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     val (stateSnapshot, toRun) = atomic { implicit txn =>
 
       def isDone(state: State, job: FlowJob): Boolean = state.apply(job) match  {
-          case Done(_) => true
-          case _       => false
-        }
+        case Done(_) => true
+        case _       => false
+      }
 
       // update state with job statuses
       val newState = completed.foldLeft(_state()) {
@@ -295,7 +213,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
     if (completed.nonEmpty || toRun.nonEmpty) {
       runOrLogAndDie(Database.serializeState(workflowdId, stateSnapshot, None).transact(xa).unsafeRunSync,
-        "FlowScheduler, cannot serialize state, shutting down")
+        "FlowScheduler, cannot serialize state, shutting down") //TODO
     }
 
     val statusJobs = stillRunning ++ newExecutions.map {
@@ -306,31 +224,50 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     statusJobs
   }
 
-  override def start(jobs: Workload[FlowScheduling],
-                     executor: Executor[FlowScheduling],
-                     xa: XA,
-                     logger: Logger): Unit = {
 
-    import scala.async.Async.{async, await}
+  /***
+    *
+    * @param jobs The jobs to run in this case in a DAG representation
+    * @param executor The executor to use to run the generated [[Execution Executions]].
+    * @param xa The doobie transactor to use to persist the scheduler state if needed.
+    * @param logger The logger to use to log internal debug state if needed.
+    */
+
+  def start(jobs: Workload[FlowScheduling], executor: Executor[FlowScheduling], xa: XA, logger: Logger) : Unit = ()
+
+  def start[F[_] : Sync](jobs: Workload[FlowScheduling],
+            executor: Executor[FlowScheduling],
+            xa: XA,
+            logger: Logger)(implicit C : Concurrent[F]): fs2.Stream[F, Set[RunJob]] = {
 
     val wf = initialize(jobs, xa, logger)
-    def mainLoop(running: Set[RunJob]): Unit = {
+    val currentExecution = fs2.Stream(runJobs(wf, executor, xa, Set.empty))
 
-      val newRunning = runJobAndGetNextOnes(running, wf, executor, xa)
-
-      if (!newRunning.isEmpty) async {
-        val ft = Future.firstCompletedOf(newRunning.map { case (_, _, f) => f })
-        await(ft)
-      }.onComplete { f => // TODO: Fail future management
-        mainLoop(newRunning)
-      }
-
-    }
-
-    mainLoop(Set.empty)
+    currentExecution
+      .covary[F]
+      .through(trampoline(tailling[F](wf, executor, xa), (rj : Set[RunJob]) => rj.isEmpty))
   }
 
 
+  private def tailling[F[_] : Sync](wf : FlowWorkflow, executor: Executor[FlowScheduling], xa: XA)
+                            (running : Set[RunJob])
+                            (implicit F: Concurrent[F]): F[Set[RunJob]] = F.async {
+    cb =>
+
+      import scala.util.{Failure, Success}
+
+      Future
+        .firstCompletedOf(running.map { case (_, _, done) => done })
+        .onComplete {
+          case Failure(exception) => cb(Left(exception))
+          case Success(_) => {
+            cb(Right(runJobs(wf, executor, xa, running)))
+          }
+        }
+
+  }
+
+  //@Todo F : Sync
   private[flow] def pauseJobs(jobs: Set[Job[FlowScheduling]], executor: Executor[FlowScheduling], xa: XA): Unit = {
     val executionsToCancel = atomic { implicit tx =>
       val pauseDate = Instant.now()
@@ -362,33 +299,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       execution.streams.debug(s"Job has been paused")
       execution.cancel()
     }
-  }
-
-}
-
-
-
-
-object FlowSchedulerUtils {
-  type FlowJob = Job[FlowScheduling]
-
-  type Executable = (FlowJob, FlowSchedulerContext) // A job to be executed
-  type RunJob = (FlowJob, FlowSchedulerContext, Future[Completed]) // Job, Context, Result
-  type State = Map[FlowJob, JobFlowState]
-
-  val UTC: ZoneId = ZoneId.of("UTC")
-
-  /**
-    * Validation of:
-    * - absence of cycles in the workflow, implemented based on Kahn's algorithm
-    * - absence of jobs with the same id
-    * @param workflow workflow to be validated
-    * @return either a validation errors list or a unit
-    */
-  def validate(workflow: FlowWorkflow): Either[List[String], Unit] = {
-    val errors = collection.mutable.ListBuffer(FlowWorkflow.validate(workflow): _*)
-    if (errors.nonEmpty) Left(errors.toList)
-    else Right(())
   }
 
 }

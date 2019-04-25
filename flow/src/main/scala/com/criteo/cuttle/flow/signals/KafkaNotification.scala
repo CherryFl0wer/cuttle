@@ -1,6 +1,5 @@
 package com.criteo.cuttle.flow.signals
 
-import cats.data.EitherT
 import cats.effect._
 import cats.implicits._
 import fs2.Stream
@@ -9,10 +8,6 @@ import fs2.kafka._
 
 import scala.concurrent.duration._
 import org.apache.kafka.clients.consumer.ConsumerRecord
-import org.apache.kafka.common.TopicPartition
-
-import scala.collection.immutable.Stream.cons
-
 /**
   * Consumes from and produces data to Kafka
   * @todo analyze Signal object from fs2
@@ -35,7 +30,7 @@ class KafkaNotification[K, V](val kafkaConfig : KafkaConfig)
   type Event = Either[Unit, CommittableMessage[IO, K, V]]
 
   private val topicEvents = Topic[IO, Event](Left(())).unsafeRunSync()
-  private val subscriber = topicEvents.subscribe(100)
+
 
   private val consumer = consumerStream[IO]
     .using(consumerSettings)
@@ -49,7 +44,7 @@ class KafkaNotification[K, V](val kafkaConfig : KafkaConfig)
     .withBootstrapServers(kafkaConfig.serversToString)
     .withGroupId(kafkaConfig.groupId)
     .withEnableAutoCommit(false)
-    .withAutoOffsetReset(AutoOffsetReset.Latest)
+    .withAutoOffsetReset(AutoOffsetReset.Earliest)
     .withPollTimeout(500.millisecond)
 
   /***
@@ -57,23 +52,34 @@ class KafkaNotification[K, V](val kafkaConfig : KafkaConfig)
     * @param cs context shift io
     * @return A Stream of IO to execute the consumer stream
     */
-  def consume = consumerStream[IO]
+
+  // Used for testing version
+  def consumeAll() = consumerStream[IO]
     .using(consumerSettings)
     .evalTap(_.subscribeTo(kafkaConfig.topic))
     .flatMap(_.stream)
-    .map(Right(_))
-    .through(topicEvents.publish)
-    .map(_ => ())
+
+  def consume = for {
+
+    _ <- consumerStream[IO]
+      .using(consumerSettings)
+      .evalTap(_.subscribeTo(kafkaConfig.topic))
+      .flatMap(_.stream)
+      .map(Right(_))
+      .through(topicEvents.publish)
+  } yield ()
 
   /**
     *
     * @param predicate filter the topic with messages corresponding
     * @return
     */
-  def subscribeTo(predicate : (ConsumerRecord[K,V]) => Boolean) =
-    subscriber
+  def subscribeOn(predicate : (ConsumerRecord[K,V]) => Boolean) = topicEvents
+      .subscribe(100)
       .collect { case Right(msg) => msg }
       .filter(ev => predicate(ev.record))
+
+
 
 
   /***
@@ -86,7 +92,6 @@ class KafkaNotification[K, V](val kafkaConfig : KafkaConfig)
     record = ProducerRecord(kafkaConfig.topic, data._1, data._2)
     msg    = ProducerMessage.one(record)
     result <- Stream.eval(producer.produce(msg).flatten)
-
   } yield result
 
 }

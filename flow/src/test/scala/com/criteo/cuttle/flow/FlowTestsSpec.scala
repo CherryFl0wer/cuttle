@@ -1,26 +1,36 @@
 package com.criteo.cuttle.flow
 
 import cats.effect.{ContextShift, IO, Timer}
+import com.criteo.cuttle.{Completed, Job, TestScheduling}
+import scala.concurrent.duration._
+import org.scalatest._
 import com.criteo.cuttle.Utils.logger
-import com.criteo.cuttle.flow.signals.{KafkaConfig, KafkaNotification}
-import com.criteo.cuttle.{Job, TestScheduling}
-import org.scalatest.FunSuite
 
 import scala.concurrent.ExecutionContext
+import scala.concurrent.duration.FiniteDuration
 
-class FlowTestsSpec extends FunSuite with TestScheduling {
+/**
+  * @summary Functionals tests of the sub-library of scheduling `Flow` situated in [com.criteo.cuttle.flow._]
+  *          - Testing workflow "browsing"
+  *          - Testing job execution
+  *
+  *           PS: Job's are not sophisticated, they are simple,
+  *           they are here to assure that execution is conform at what we expect
+  *
+  * @Todo Own database for the tests
+  * */
+class FlowTestsSpec extends FunSuite with TestScheduling with TestSchedulingFlow with Matchers {
 
 
   implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
   implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
-  val job: Vector[Job[FlowScheduling]] = Vector.tabulate(4)(i => Job(i.toString, FlowScheduling())(completed))
-  val signalJob = new KafkaNotification[String, String](KafkaConfig(
-    topic = "signal-flow-test",
-    groupId = "flow-signal",
-    servers = List("localhost:9092")))
+  val job: Vector[Job[FlowScheduling]] = Vector.tabulate(6)(i => Job(s"job-${i.toString}", FlowScheduling())(completed))
 
-  val scheduler = FlowScheduler(logger, "workflow-from-test")
+  def waitingJob(time : FiniteDuration) : Job[FlowScheduling] = Job("job-waiting", FlowScheduling()) { implicit e =>
+    e.park(time).map(_ => Completed)(ExecutionContext.global)
+  }
+
 
   test("it should validate empty workflow") {
     val workflow = FlowWorkflow.empty
@@ -33,6 +43,7 @@ class FlowTestsSpec extends FunSuite with TestScheduling {
 
     assert(FlowSchedulerUtils.validate(workflow).isRight, "workflow is not valid")
   }
+
 
   test("it should validate workflow without cycles and valid start dates") {
     val workflow = job(0) dependsOn job(1) dependsOn job(2)
@@ -54,22 +65,47 @@ class FlowTestsSpec extends FunSuite with TestScheduling {
     assert(FlowSchedulerUtils.validate(workflow).isLeft, "workflow passed a validation of cycle presence")
   }
 
+  test("it should execute in order the jobs correctly with waiting job") {
+    val wf = job(0) <-- job(1) <-- (job(2) || waitingJob(3 seconds))
+    val project = FlowProject("test01", "Test of jobs execution")(wf)
+    val browse = project.start[IO]().compile.toList.unsafeRunSync
+    val testingList = List(
+      List("job-2", "job-waiting"),
+      List("job-waiting"),
+      List("job-1"),
+      List("job-0"),
+      List.empty
+    )
 
-  /*
-
-    val words = List("V1", "V2", "V3")
-    signalJob
-      .consume
-      .compile
-      .drain
-      .unsafeRunAsyncAndForget()
-
-    words.foreach(sig => signalJob.pushOne((project.workflowId, sig)).compile.drain.unsafeRunSync())
-  */
-  test("it should ") {
-    val wf = job(0) <-- job(1) <-- (job(2) :: job(3))
-    val project = FlowProject("test", "Test of jobs execution")(wf)
-
-    project.start().unsafeRunSync()
+    var x = 0
+    browse.foreach { runnedJobs =>
+        runnedJobs.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
+        x += 1
+    }
   }
+
+  test("it should execute sequential `and`") {
+    val wf = job(0) <-- (job(1) || job(4)) <-- (job(2) || job(3))
+    val project = FlowProject("test02", "Test of jobs execution")(wf)
+    val browse = project.start[IO]().compile.toList.unsafeRunSync
+    val testingList = List(
+      List("job-2", "job-3"),
+      List("job-2"),
+      List("job-1", "job-4"),
+      List("job-1"),
+      List("job-0"),
+      List.empty
+    )
+
+    var x = 0
+    browse.foreach { runnedJobs =>
+      runnedJobs.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
+      x += 1
+    }
+  }
+
+
+
+
+
 }
