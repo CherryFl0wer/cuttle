@@ -32,10 +32,11 @@ package object flow {
         val jobs = workflow.jobsInOrder.asJson
         val tags = workflow.vertices.flatMap(_.tags).asJson
         val dependencies = workflow.edges.map {
-          case (from, to) =>
+          case (from, to, kind) =>
             Json.obj(
               "from" -> from.id.asJson,
-              "to" -> to.id.asJson
+              "to" -> to.id.asJson,
+              "kind" -> kind.toString.asJson
             )
         }.asJson
 

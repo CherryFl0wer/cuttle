@@ -120,18 +120,23 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
     val newWorkflow = FlowWorkflow without(workflow, state.keySet)
 
+
+    // Might use job in order
     def jobsAllowedToRun(nextJobs : Set[FlowJob], runningJobs : Set[FlowJob]) =
       nextJobs
         .filter { job =>
           workflow.edges
-            .filter { case (parent, _) => parent == job }
+            .filter { case (parent, _, _) => parent == job }
             .foldLeft(true)( (acc, edge) => acc && !runningJobs.contains(edge._2))
         }
 
 
+    //@Todo Check algorithm to see if it is running correctly
+
+
     val toRun = jobsAllowedToRun(newWorkflow.roots, currentJobsRunning(state)).map { j =>
-      val childsOfjob = workflow.childOf(j)
-      val resultsOfChild = childsOfjob.foldLeft(Map.empty[String, Json])((acc, job) => atomic {
+      val childOfJob = workflow.childOf(j)
+      val resultsOfChild = childOfJob.foldLeft(Map.empty[String, Json])((acc, job) => atomic {
         implicit txn => acc + (job.id -> _results().getOrElse(job, Json.Null))
       })
 

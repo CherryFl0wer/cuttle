@@ -33,7 +33,7 @@ object TestWorkflow extends IOApp {
 
     val qkJob = jobs(10)
 
-    val run = project(qkJob(0) <-- (qkJob(1) || qkJob(2) || dataprepJob)).start[IO]()
+    val run = project(qkJob(0) --> (qkJob(1) && qkJob(2) && dataprepJob)).start[IO]()
     val list = run.compile.toList.unsafeRunSync
     list.foreach(p => println(p))
 
@@ -50,16 +50,6 @@ object TestWorkflow extends IOApp {
   private def jobs(howMuch : Int): Vector[Job[FlowScheduling]] = Vector.tabulate(howMuch)(i =>
     Job(i.toString, FlowScheduling())((_: Execution[_]) => Future.successful(Completed))
   )
-
-  private val workflowML = FlowProject(description = "Testing code to implement flow workflow with signal") {
-    booJob dependsOn (
-      modellingJob dependsOn (
-        dataprepJob and makeTrainJob and SignallingJob.kafka("Enclenche", "trigger-next-stepu", kafkaService = flowSignalTopic)
-        ) and (
-        fooJob dependsOn makePredictionJob
-        )
-      )
-  }
 
   private val booJob = {
     Job("Step6", FlowScheduling(Some("{myparam1: \"ok\"}")), "Booing") {

@@ -8,7 +8,7 @@ import com.criteo.cuttle.{Completed, Job, TestScheduling}
 import org.scalatest.Matchers
 import org.scalatest.FunSuite
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.{ExecutionContext}
 import scala.concurrent.duration._
 
 /**
@@ -20,7 +20,7 @@ import scala.concurrent.duration._
   *
   * @Todo Own database for the tests
   * */
-class FlowSignalTestsSpec extends FunSuite with TestScheduling with TestSchedulingFlow with Matchers {
+class FlowSignalTestsSpec extends FunSuite with TestScheduling with Matchers {
 
   implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
   implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
@@ -69,13 +69,13 @@ class FlowSignalTestsSpec extends FunSuite with TestScheduling with TestScheduli
       groupId = "flow-signal-test-consumer",
       servers = List("localhost:9092")))
 
-    val signalJ = SignallingJob.kafka("job-signal-02-test", "signal-02-test", flowTestSignalTopic)
+    val signalJ = SignallingJob.kafka("job-signal-00-test", "signal-00-test", flowTestSignalTopic)
 
-    val wf = job(0) <-- job(1) <-- (job(2) || signalJ)
+    val wf = (job(0) && signalJ) --> job(1) --> job(2)
 
     val project = FlowProject("test03", "Test of jobs signals")(wf)
 
-    val toPush = flowTestSignalTopic.pushOne((project.workflowId, "signal-02-test"))
+    val toPush = flowTestSignalTopic.pushOne((project.workflowId, "signal-00-test"))
 
     val pusher = fs2.Stream.awakeEvery[IO](5 seconds).head.flatMap(_ => toPush)
 
@@ -86,10 +86,10 @@ class FlowSignalTestsSpec extends FunSuite with TestScheduling with TestScheduli
     val res = done.compile.toList.unsafeRunSync()
 
     val testingList = List(
-      List("job-2", "job-signal-02-test"),
-      List("job-signal-02-test"),
+      List("job-0", "job-signal-00-test"),
+      List("job-signal-00-test"),
       List("job-1"),
-      List("job-0"),
+      List("job-2"),
       List.empty
     )
 
