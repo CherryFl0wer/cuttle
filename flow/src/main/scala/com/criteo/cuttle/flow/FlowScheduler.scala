@@ -41,8 +41,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
   private val queries = Queries(logger)
 
 
-
-  // @TODO Not exiting savagely
+  //TODO Adapt it no more exit and no print on the stack.
   private def runOrLogAndDie(thunk: => Unit, message: => String): Unit = {
     import java.io._
 
@@ -117,9 +116,9 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
   /***
     * @summary Select the jobs that will run
-    * @param workflow ..
-    * @param executor ..
-    * @param state ..
+    * @param workflow To get the next jobs to run and the result from previous node
+    * @param executor To get data for context job
+    * @param state Current state of the jobs
     * @return A sequence of executable jobs
     */
 
@@ -132,7 +131,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     def jobsAllowedToRun(nextJobs : Set[FlowJob], runningJobs : Set[FlowJob]) = nextJobs.filter { job => !runningJobs.contains(job) }
 
     val toRun = jobsAllowedToRun(newWorkflow.roots, currentJobsRunning(state)).map { j =>
-      val parentOfJob = workflow.parentsOf(j)
+      val parentOfJob = workflow.parentsOf(j) // Previous job
       val resultsFromParent = parentOfJob.foldLeft(Map.empty[String, Json])((acc, job) => atomic {
         implicit txn => acc + (job.id -> _results().getOrElse(job, Json.Null))
       })
@@ -215,7 +214,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
     if (completed.nonEmpty || toRun.nonEmpty) {
       runOrLogAndDie(Database.serializeState(workflowdId, stateSnapshot, None).transact(xa).unsafeRunSync,
-        "FlowScheduler, cannot serialize state, shutting down") //TODO is exiting unproperly
+        "FlowScheduler, cannot serialize state, shutting down")
     }
 
     val statusJobs = stillRunning ++ newExecutions.map {

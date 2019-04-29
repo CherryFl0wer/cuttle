@@ -88,27 +88,35 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
 
 
   /**
-    * @Todo descriptino
     * Compose a [[FlowWorkflow]] with a second [[FlowWorkflow]] with a dependencies added between
-    * all this workflow roots and the other workflow leaves. The added dependencies will use the
-    * specified dependency descriptors.
+    * all this workflow roots and the other workflow leaves.
     *
-    * @param rightOperand The workflow to compose this workflow with.
+    * @param success The workflow to compose this workflow with.
     */
 
   def -->(success : FlowWorkflow) : FlowWorkflow = andThen((success, RoutingKind.Success))
 
+
+  /**
+    * Compose a [[FlowWorkflow]] with two [[FlowWorkflow]] one way lead to success the other to fail in case
+    * of a job failure the scheduler will be able to redirect to the good path
+    *
+    * @param success If left [[FlowWorkflow]] is a succesful future then execute this one
+    * @param fail In the other case execute this [[FlowWorkflow]]
+    */
   def successAndError(success : FlowWorkflow, fail : FlowWorkflow) = {
     val leftWorkflow = this
 
+    // We take the branch that goes to success to build from this specific(s) vertice(s)
+    val successKindVertice = leftWorkflow.edges.filter { case (_, current, kind) => leftWorkflow.leaves.contains(current) && kind == RoutingKind.Success }.map(_._2)
+
     val newEdgesSucc: Set[Dependency] = for {
-      v1 <- leftWorkflow.leaves
+      v1 <- if (successKindVertice.isEmpty) leftWorkflow.leaves else successKindVertice
       v2 <- success.roots
     } yield (v1, v2, RoutingKind.Success)
 
-
     val newEdgesFail: Set[Dependency] = for {
-      v1 <- leftWorkflow.leaves
+      v1 <- if (successKindVertice.isEmpty) leftWorkflow.leaves else successKindVertice
       v2 <- fail.roots
     } yield (v1, v2, RoutingKind.Failure)
 
@@ -123,8 +131,9 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     val leftWorkflow = this
     val (rightWorkflow, kindRoute) = rightOperand
 
+    val onlyKindVertice = leftWorkflow.edges.filter { case (_, current, kind) => leftWorkflow.leaves.contains(current) && kind == kindRoute }.map(_._2)
     val newEdges: Set[Dependency] = for {
-      v1 <- leftWorkflow.leaves
+      v1 <- if (onlyKindVertice.isEmpty) leftWorkflow.leaves else onlyKindVertice
       v2 <- rightWorkflow.roots
     } yield (v1, v2, kindRoute)
 
@@ -132,6 +141,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
       val vertices = leftWorkflow.vertices ++ rightWorkflow.vertices
       val edges = leftWorkflow.edges ++ rightWorkflow.edges ++ newEdges
     }
+
   }
 
 
