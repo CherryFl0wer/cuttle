@@ -2,9 +2,11 @@ package com.criteo.cuttle.flow
 
 import cats.effect.{ContextShift, IO, Timer}
 import com.criteo.cuttle.{Completed, Job, TestScheduling}
+
 import scala.concurrent.duration._
 import org.scalatest._
 import com.criteo.cuttle.Utils.logger
+import com.criteo.cuttle.flow.FlowSchedulerUtils.RunJob
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.FiniteDuration
@@ -27,7 +29,7 @@ class FlowTestsSpec extends FunSuite with TestScheduling with Matchers {
 
   val job: Vector[Job[FlowScheduling]] = Vector.tabulate(6)(i => Job(s"job-${i.toString}", FlowScheduling())(completed))
 
-  def waitingJob(time : FiniteDuration) : Job[FlowScheduling] = Job("job-waiting", FlowScheduling()) { implicit e =>
+  def waitingJob(id: String = "0", time : FiniteDuration) : Job[FlowScheduling] = Job(s"job-waiting-${id}", FlowScheduling()) { implicit e =>
     e.park(time).map(_ => Completed)(ExecutionContext.global)
   }
 
@@ -88,13 +90,13 @@ class FlowTestsSpec extends FunSuite with TestScheduling with Matchers {
   }
 
 
-  test("it should execute in order the jobs correctly with waiting job") {
-    val wf = (job(0) && waitingJob(3 seconds)) --> job(1) --> job(2)
+  test("it should execute in order the jobs correctly with waiting job (success only)") {
+    val wf = (job(0) && waitingJob("0", 3 seconds)) --> job(1) --> job(2)
     val project = FlowProject("test01", "Test of jobs execution")(wf)
     val browse = project.start[IO]().compile.toList.unsafeRunSync
     val testingList = List(
-      List("job-0", "job-waiting"),
-      List("job-waiting"),
+      List("job-0", "job-waiting-0"),
+      List("job-waiting-0"),
       List("job-1"),
       List("job-2"),
       List.empty
@@ -107,28 +109,62 @@ class FlowTestsSpec extends FunSuite with TestScheduling with Matchers {
     }
   }
 
-  test("it should execute sequential `and`") {
+
+  test("it should execute sequential `and` (success only)") {
     val wf = job(0) --> (job(1) && job(2)) --> (job(3) && job(4))
-    val project = FlowProject("test02", "Test of jobs execution")(wf)
+    val project = FlowProject("test02", "Test  of jobs execution")(wf)
     val browse = project.start[IO]().compile.toList.unsafeRunSync
     val testingList = List(
       List("job-0"),
+
       List("job-1", "job-2"),
-      List("job-2"),
+      List("job-1", "job-2"),
+
       List("job-3", "job-4"),
-      List("job-4"),
-      List.empty
+      List("job-3", "job-4")
     )
 
     var x = 0
-    browse.foreach { runnedJobs =>
-      runnedJobs.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
+    browse.slice(0, browse.length-1).foreach { runnedJobs =>
+      runnedJobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
       x += 1
     }
+
+    browse.last should contain theSameElementsAs List.empty
   }
 
+  test("it should execute in order with multiple waiting job (success only) ") {
+    val wf = (job(0) && job(1) && waitingJob("0",3 seconds)) --> job(2) --> (job(3) && waitingJob("1", 5 seconds)) --> job(4) --> job(5)
+    val project = FlowProject("test03", "Test  of jobs execution")(wf)
+    val browse = project.start[IO]().compile.toList.unsafeRunSync
+    val testingList = List(
+      List("job-0", "job-1", "job-waiting-0"),
+      List("job-0", "job-1", "job-waiting-0"),
+      List("job-0", "job-1", "job-waiting-0"),
+      List("job-2"),
+      List("job-3", "job-waiting-1"),
+      List("job-3", "job-waiting-1"),
+      List("job-4"),
+      List("job-5")
+    )
 
+    var x = 0
+    browse.slice(0, browse.length-1).foreach { runnedJobs =>
+      runnedJobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
+      x += 1
+    }
 
+    browse.last should contain theSameElementsAs List.empty
+  }
 
+  /*
+  test("it should execute a tree like form (success only)") {
+    val part1 = (job(0) && waitingJob("1", 3 seconds)) --> job(3)
+    val part2 = job(2) --> job(4)
+    val wf = (part1 && part2) --> job(5)
+
+    val project = FlowProject("test02", "Test  of jobs execution")(wf)
+    val browse = project.start[IO]().compile.toList.unsafeRunSync
+  } */
 
 }

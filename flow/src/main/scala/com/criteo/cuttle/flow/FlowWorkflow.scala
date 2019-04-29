@@ -61,6 +61,11 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     else edges.filter { case (current, _, _) => current == vertice }.map { case (_, child, _) => child }
   }
 
+  private[cuttle] def parentsOf(vertice : FlowJob) : Set[FlowJob] = {
+    if (roots.contains(vertice)) Set.empty
+    else edges.filter { case (_, current, _) => current == vertice }.map { case (parent, _, _) => parent }
+  }
+
 
 
   /**
@@ -149,7 +154,7 @@ object FlowWorkflow {
       wf
 
     val newVertices = wf.vertices.filterNot(jobs)
-    val newEdges = wf.edges.filterNot(p => jobs.contains(p._2))
+    val newEdges = wf.edges.filterNot(p => jobs.contains(p._1))
 
     new FlowWorkflow {
       def vertices = newVertices

@@ -60,10 +60,19 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
   }
 
   private def currentJobsRunning(state : State) : Set[FlowJob] = atomic { implicit txn =>
-    state.filter { p =>
-      p._2 match {
+    state.filter { case (_, jobState) =>
+      jobState match {
         case Done(_) => false
         case _ => true
+      }
+    }.keySet
+  }
+
+  private def currentJobsDone(state : State) : Set[FlowJob] = atomic { implicit txn =>
+    state.filter { case (_, jobState) =>
+      jobState match {
+        case Done(_) => true
+        case _ => false
       }
     }.keySet
   }
@@ -118,29 +127,17 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
                               executor: Executor[FlowScheduling],
                               state : State): Seq[Executable] = {
 
-    val newWorkflow = FlowWorkflow without(workflow, state.keySet)
+    val newWorkflow = FlowWorkflow.without(workflow, currentJobsDone(state))
 
-
-    // Might use job in order
-    def jobsAllowedToRun(nextJobs : Set[FlowJob], runningJobs : Set[FlowJob]) =
-      nextJobs
-        .filter { job =>
-          workflow.edges
-            .filter { case (parent, _, _) => parent == job }
-            .foldLeft(true)( (acc, edge) => acc && !runningJobs.contains(edge._2))
-        }
-
-
-    //@Todo Check algorithm to see if it is running correctly
-
+    def jobsAllowedToRun(nextJobs : Set[FlowJob], runningJobs : Set[FlowJob]) = nextJobs.filter { job => !runningJobs.contains(job) }
 
     val toRun = jobsAllowedToRun(newWorkflow.roots, currentJobsRunning(state)).map { j =>
-      val childOfJob = workflow.childOf(j)
-      val resultsOfChild = childOfJob.foldLeft(Map.empty[String, Json])((acc, job) => atomic {
+      val parentOfJob = workflow.parentsOf(j)
+      val resultsFromParent = parentOfJob.foldLeft(Map.empty[String, Json])((acc, job) => atomic {
         implicit txn => acc + (job.id -> _results().getOrElse(job, Json.Null))
       })
 
-      (j, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId, resultsOfChild))
+      (j, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId, resultsFromParent))
     }
 
     toRun.toSeq
@@ -218,7 +215,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
     if (completed.nonEmpty || toRun.nonEmpty) {
       runOrLogAndDie(Database.serializeState(workflowdId, stateSnapshot, None).transact(xa).unsafeRunSync,
-        "FlowScheduler, cannot serialize state, shutting down") //TODO
+        "FlowScheduler, cannot serialize state, shutting down") //TODO is exiting unproperly
     }
 
     val statusJobs = stillRunning ++ newExecutions.map {
@@ -250,11 +247,11 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
     currentExecution
       .covary[F]
-      .through(trampoline(tailling[F](wf, executor, xa), (rj : Set[RunJob]) => rj.isEmpty))
+      .through(trampoline(doneFirst[F](wf, executor, xa), (rj : Set[RunJob]) => rj.isEmpty))
   }
 
 
-  private def tailling[F[_] : Sync](wf : FlowWorkflow, executor: Executor[FlowScheduling], xa: XA)
+  private def doneFirst[F[_] : Sync](wf : FlowWorkflow, executor: Executor[FlowScheduling], xa: XA)
                             (running : Set[RunJob])
                             (implicit F: Concurrent[F]): F[Set[RunJob]] = F.async {
     cb =>

@@ -31,9 +31,11 @@ object TestWorkflow extends IOApp {
       .unsafeRunAsyncAndForget()*/
 
 
-    val qkJob = jobs(10)
+    val qkJob = jobs(7)
 
-    val run = project(qkJob(0) --> (qkJob(1) && qkJob(2) && dataprepJob)).start[IO]()
+    val wf = (((dataprepJob && fooJob) --> booJob) && (makeTrainJob --> makePredictionJob("Step-Training"))) --> (modellingJob)
+
+    val run = FlowProject()(wf).start[IO]()
     val list = run.compile.toList.unsafeRunSync
     list.foreach(p => println(p))
 
@@ -45,18 +47,20 @@ object TestWorkflow extends IOApp {
     fs2.Stream.awakeEvery[IO](duration).head *>
     flowSignalTopic.pushOne(msg)
 
-  private def project(jobs : FlowWorkflow) = FlowProject()(jobs)
 
   private def jobs(howMuch : Int): Vector[Job[FlowScheduling]] = Vector.tabulate(howMuch)(i =>
     Job(i.toString, FlowScheduling())((_: Execution[_]) => Future.successful(Completed))
   )
 
   private val booJob = {
-    Job("Step6", FlowScheduling(Some("{myparam1: \"ok\"}")), "Booing") {
+    Job("Step-Boo", FlowScheduling(Some("{param: \"ok\"}")), "Booing") {
       implicit e =>
 
-        e.streams.info("Testing 6")
-        val jsonInputs = e.job.scheduling.inputs.fold(Json.Null)(j => parse(j).right.getOrElse(Json.Null))
+        e.streams.info("Testing Boo")
+        val jsonInputs : Json = parse(e.job.scheduling.inputs.get) match {
+          case Left(_) => Json.Null
+          case Right(parsed) => parsed
+        }
 
         e.context.result = Json.obj(
           "response" -> "as two".asJson,
@@ -68,47 +72,47 @@ object TestWorkflow extends IOApp {
   }
 
   private val fooJob = {
-    Job("Step5", FlowScheduling(), "Fooing") {
+    Job("Step-Foo", FlowScheduling(), "Fooing") {
       implicit e: Execution[FlowScheduling] =>
-        e.streams.info("Testing 5")
+        e.streams.info("Testing Foo")
         Future.successful(Completed)
     }
   }
 
   private val modellingJob = {
-    Job("Step4", FlowScheduling(), "modeling") {
+    Job("Step-Modelling", FlowScheduling(), "modeling") {
       implicit e =>
-        e.streams.info("Testing 4")
+        e.streams.info("Testing Modelling")
         Future.successful(Completed)
     }
   }
 
-  private val makePredictionJob = {
-    Job("Step3", FlowScheduling(), "predicting") {
+  private val makePredictionJob = (prevStep : String) => {
+    Job("Step-MakePredic", FlowScheduling(), "predicting") {
       implicit e =>
-        e.streams.info("Testing 3")
-        e.context.resultsFromPreviousNodes.get("Step2").foreach(json => println(json))
+        e.streams.info("Testing MakePredic")
+        e.streams.writeln(e.context.resultsFromPreviousNodes.get(prevStep).toString)
         Future.successful(Completed)
     }
   }
 
   private val makeTrainJob = {
-    Job("Step2", FlowScheduling(), "train") {
+    Job("Step-Training", FlowScheduling(), "train") {
       implicit e =>
-        e.streams.info("Testing 2")
+        e.streams.info("Testing Training")
         e.context.result = Json.obj(
-          "name" -> "job2".asJson
+          "name" -> "job training".asJson
         )
         Future.successful(Completed)
     }
   }
 
   private val dataprepJob = {
-    Job("Step1", FlowScheduling(), "Data preparation") {
+    Job("Step-Dataprep", FlowScheduling(), "Data preparation") {
       implicit e =>
         exec"""sh -c '
-         |    echo Looping for 10 seconds...
-         |    for i in `seq 1 10`
+         |    echo Looping for 5 seconds...
+         |    for i in `seq 1 5`
          |    do
          |        date
          |        sleep 1
