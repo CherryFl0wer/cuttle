@@ -725,7 +725,7 @@ class Executor[S <: Scheduling] private[cuttle] (
     promise.completeWith(
       (Try(execution.run()) match { // Running side effect
         case Success(f) => f
-        case Failure(e) => if (execution.forcedSuccess.single()) Future.successful(Completed) else Future.failed(e)
+        case Failure(e) => if (execution.forcedSuccess.single()) Future.successful(Finished) else Future.failed(e)
       }).andThen {
           case Success(_) =>
             execution.streams.debug(s"Execution successful")

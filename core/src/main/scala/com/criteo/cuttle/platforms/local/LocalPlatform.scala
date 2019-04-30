@@ -64,7 +64,7 @@ class LocalProcess(command: String) {
           override def onExit(statusCode: Int) =
             statusCode match {
               case 0 =>
-                result.success(Completed)
+                result.success(Finished)
               case n =>
                 result.failure(new Exception(s"Process exited with code $n"))
             }

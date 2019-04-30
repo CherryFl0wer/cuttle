@@ -38,6 +38,9 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     vertices.filter(!nodes.contains(_))
   }
 
+  private[cuttle] def isA(routingKind: RoutingKind.Routing)(vertex : FlowJob) = edges
+    .filter { case (_, child, kind) => kind == routingKind && child == vertex }
+    .size > 0
 
   // Returns a list of jobs in the workflow sorted topologically, using Kahn's algorithm. At the
   // same time checks that there is no cycle.
@@ -54,6 +57,11 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
       case None => throw new IllegalArgumentException("Workflow has at least one cycle")
     }
   }
+
+
+  private[cuttle] def childsFromRoute(job : FlowJob, kind: RoutingKind.Routing)  = edges
+    .filter { case (current, _, route) => current == job && route == kind }
+    .map(_._2)
 
 
   private[cuttle] def childOf(vertice : FlowJob) : Set[FlowJob] = {
@@ -155,11 +163,19 @@ object FlowWorkflow {
   /** An empty [[FlowWorkflow]] (empty graph). */
   def empty[S <: Scheduling]: FlowWorkflow = new FlowWorkflow {
     def vertices = Set.empty
+
     def edges = Set.empty
   }
 
 
-  def without(wf : FlowWorkflow, jobs : Set[FlowJob]) : FlowWorkflow = {
+  /** *
+    * Take off every vertices in jobs and return the workflow without it
+    *
+    * @param wf
+    * @param jobs
+    * @return a new workflow without the `jobs`
+    */
+  def without(wf: FlowWorkflow, jobs: Set[FlowJob]): FlowWorkflow = {
     if (jobs.isEmpty)
       wf
 
@@ -168,6 +184,7 @@ object FlowWorkflow {
 
     new FlowWorkflow {
       def vertices = newVertices
+
       def edges = newEdges
     }
   }
@@ -176,7 +193,8 @@ object FlowWorkflow {
     * Validation of:
     * - absence of cycles in the workflow
     * - absence of jobs with the same id
-    *  @return the list of errors in the workflow, if any
+    *
+    * @return the list of errors in the workflow, if any
     */
   def validate(workflow: FlowWorkflow): List[String] = {
     val errors = collection.mutable.ListBuffer.empty[String]
@@ -201,6 +219,16 @@ object FlowWorkflow {
     workflow.vertices.groupBy(_.id).collect {
       case (id: String, jobs) if jobs.size > 1 => id
     } foreach (id => errors += s"Id $id is used by more than 1 job")
+
+    workflow.edges
+      .map { case (_, child, kind) => (child, kind) }
+      .groupBy(_._1)
+      .foreach { case (job, values) => {
+          val kindSet = values.map(_._2)
+          kindSet.exists { kind => kind == RoutingKind.Success } && kindSet.exists { kind => kind == RoutingKind.Failure }
+          errors += s"${job.id} is both an error job and a success job"
+        }
+      }
 
     errors.toList
   }

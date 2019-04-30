@@ -105,7 +105,7 @@ class ExecutorSpec extends FunSuite with TestScheduling {
 
   private def buildJob(jobId: String, tags: Set[Tag] = Set.empty): Job[TestScheduling] =
     Job(jobId, TestScheduling(), jobId, tags = tags) { implicit execution =>
-      Future { Completed }(execution.executionContext)
+      Future { Finished }(execution.executionContext)
     }
 
   private def buildExecutionForJob(job: Job[TestScheduling]): Execution[TestScheduling] =

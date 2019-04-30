@@ -30,7 +30,8 @@ package cuttle {
     *   Future.successful(Completed)
     * }}}
     */
-  case object Completed extends Completed
+  case object Finished extends Completed
+
 }
 
 /**
@@ -96,7 +97,7 @@ package object cuttle {
   }
 
   implicit def jobEncoder[S <: Scheduling : Encoder] = new Encoder[Job[S]] {
-    override def apply(job: Job[S]) = {
+    override def apply(job: Job[S]) : Json = {
 
       Json
         .obj(

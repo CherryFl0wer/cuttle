@@ -3,7 +3,7 @@ package com.criteo.cuttle.flow
 import java.time.Instant
 import java.util.UUID
 
-import cats.effect.{Concurrent, IO, Sync}
+import cats.effect.{Concurrent, Sync}
 import com.criteo.cuttle.flow.FlowSchedulerUtils.FlowJob
 import com.criteo.cuttle.{Completed, DatabaseConfig, ExecutionPlatform, Executor, Logger, RetryStrategy, Scheduling, platforms, Database => FlowDB}
 

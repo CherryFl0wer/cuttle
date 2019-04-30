@@ -1,7 +1,7 @@
 package com.criteo.cuttle.flow
 
 import java.time.{Instant}
-import cats.effect.{Async, IO, Concurrent, Sync}
+import cats.effect.{Concurrent, Sync}
 import cats.implicits._
 import com.criteo.cuttle.ThreadPools.Implicits.sideEffectThreadPool
 import com.criteo.cuttle.ThreadPools._
@@ -66,7 +66,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       }
     }.keySet
   }
-
   private def currentJobsDone(state : State) : Set[FlowJob] = atomic { implicit txn =>
     state.filter { case (_, jobState) =>
       jobState match {
@@ -75,7 +74,37 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       }
     }.keySet
   }
+  private def currentJobsFailed(state : State) : Set[FlowJob] = atomic { implicit txn =>
+    state.filter { case (_, jobState) =>
+      jobState match {
+        case Failed(_) => false
+        case _ => true
+      }
+    }.keySet
+  }
 
+
+
+  /**
+    * @param job the job to save
+    * @param context the context of the job
+    * @param xa doobie sql
+    * @summary Save job's result in the database and in a map inmemory.
+    *         the map is here to avoid seeking for the result in the db every time we need it
+    * */
+  private def saveResult(job : FlowJob, context : FlowSchedulerContext, xa : XA) = {
+    Database.insertResult(workflowdId, job.id,  job.scheduling.inputs.asJson, context.result)
+      .transact(xa)
+      .unsafeRunSync()
+
+    atomic { implicit txn =>
+      _results() = _results() + (job -> context.result)
+    }
+  }
+
+  /*
+  * Wrap around IO
+  * */
   private[flow] def initialize(wf : Workload[FlowScheduling], xa : XA, logger : Logger) = {
     val workflow = wf.asInstanceOf[FlowWorkflow]
 
@@ -126,11 +155,24 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
                               executor: Executor[FlowScheduling],
                               state : State): Seq[Executable] = {
 
-    val newWorkflow = FlowWorkflow.without(workflow, currentJobsDone(state))
 
-    def jobsAllowedToRun(nextJobs : Set[FlowJob], runningJobs : Set[FlowJob]) = nextJobs.filter { job => !runningJobs.contains(job) }
+    val doneJob = currentJobsDone(state)
+    val newWorkflow = FlowWorkflow.without(workflow, doneJob)
 
-    val toRun = jobsAllowedToRun(newWorkflow.roots, currentJobsRunning(state)).map { j =>
+    // Are those which are not running
+    def jobsAllowedToRun(nextJobs : Set[FlowJob]) =
+      nextJobs
+        .filter { job => !currentJobsRunning(state).contains(job) }
+        .foldLeft(Set.empty[FlowJob]) { (acc, job) =>
+          if (currentJobsFailed(state).contains(job)) { // if the jobs has failed then we give its error path for next jobs
+            val errorChild = newWorkflow.childsFromRoute(job, RoutingKind.Failure)
+            acc ++ errorChild
+          } else acc + job // Normal success job
+        }
+
+
+    val roots = newWorkflow.roots //.filter(job => newWorkflow.isA(RoutingKind.Success)(job))
+    val toRun = jobsAllowedToRun(roots).map { j =>
       val parentOfJob = workflow.parentsOf(j) // Previous job
       val resultsFromParent = parentOfJob.foldLeft(Map.empty[String, Json])((acc, job) => atomic {
         implicit txn => acc + (job.id -> _results().getOrElse(job, Json.Null))
@@ -142,23 +184,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     toRun.toSeq
   }
 
-
-  /**
-    * @param job the job to save
-    * @param context the context of the job
-    * @param xa doobie sql
-    * @summary Save job's result in the database and in a map inmemory.
-    *         the map is here to avoid seeking for the result in the db every time we need it
-    * */
-  private def saveResult(job : FlowJob, context : FlowSchedulerContext, xa : XA) = {
-    Database.insertResult(workflowdId, job.id,  job.scheduling.inputs.asJson, context.result)
-      .transact(xa)
-      .unsafeRunSync()
-
-    atomic { implicit txn =>
-      _results() = _results() + (job -> context.result)
-    }
-  }
 
 
   /**
@@ -180,7 +205,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     // Update state and get the jobs to run
     val (stateSnapshot, toRun) = atomic { implicit txn =>
 
-      def isDone(state: State, job: FlowJob): Boolean = state.apply(job) match  {
+      def isDone(state: State, job: FlowJob): Boolean = state(job) match  {
         case Done(_) => true
         case _       => false
       }
@@ -192,6 +217,10 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
           if (future.value.get.isSuccess || isDone(_state(), job)) {
             saveResult(job, context, xa)
             acc + (job -> Done(context.projectVersion))
+          }
+          else if(future.value.get.isFailure) {
+            saveResult(job, context, xa)
+            acc + (job -> Failed(context.projectVersion))
           }
           else acc
       }
@@ -254,22 +283,15 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
                             (running : Set[RunJob])
                             (implicit F: Concurrent[F]): F[Set[RunJob]] = F.async {
     cb =>
-
-      import scala.util.{Failure, Success}
-
       Future
         .firstCompletedOf(running.map { case (_, _, done) => done })
         .onComplete {
-          case Failure(exception) => cb(Left(exception))
-          case Success(_) => {
-            cb(Right(runJobs(wf, executor, xa, running)))
-          }
+          case _ => cb(Right(runJobs(wf, executor, xa, running)))
         }
-
   }
 
   //@Todo F : Sync
-  private[flow] def pauseJobs(jobs: Set[Job[FlowScheduling]], executor: Executor[FlowScheduling], xa: XA): Unit = {
+  /*private[flow] def pauseJobs(jobs: Set[Job[FlowScheduling]], executor: Executor[FlowScheduling], xa: XA): Unit = {
     val executionsToCancel = atomic { implicit tx =>
       val pauseDate = Instant.now()
       val pausedJobIds = _pausedJobs().map(_.id)
@@ -300,6 +322,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       execution.streams.debug(s"Job has been paused")
       execution.cancel()
     }
-  }
+  }*/
 
 }

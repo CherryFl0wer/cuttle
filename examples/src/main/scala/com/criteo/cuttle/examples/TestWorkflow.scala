@@ -49,7 +49,7 @@ object TestWorkflow extends IOApp {
 
 
   private def jobs(howMuch : Int): Vector[Job[FlowScheduling]] = Vector.tabulate(howMuch)(i =>
-    Job(i.toString, FlowScheduling())((_: Execution[_]) => Future.successful(Completed))
+    Job(i.toString, FlowScheduling())((_: Execution[_]) => Future.successful(Finished))
   )
 
   private val booJob = {
@@ -67,7 +67,7 @@ object TestWorkflow extends IOApp {
           "inputsWas" -> jsonInputs
         )
 
-        Future.successful(Completed)
+        Future.successful(Finished)
     }
   }
 
@@ -75,7 +75,7 @@ object TestWorkflow extends IOApp {
     Job("Step-Foo", FlowScheduling(), "Fooing") {
       implicit e: Execution[FlowScheduling] =>
         e.streams.info("Testing Foo")
-        Future.successful(Completed)
+        Future.successful(Finished)
     }
   }
 
@@ -83,7 +83,7 @@ object TestWorkflow extends IOApp {
     Job("Step-Modelling", FlowScheduling(), "modeling") {
       implicit e =>
         e.streams.info("Testing Modelling")
-        Future.successful(Completed)
+        Future.successful(Finished)
     }
   }
 
@@ -92,7 +92,7 @@ object TestWorkflow extends IOApp {
       implicit e =>
         e.streams.info("Testing MakePredic")
         e.streams.writeln(e.context.resultsFromPreviousNodes.get(prevStep).toString)
-        Future.successful(Completed)
+        Future.successful(Finished)
     }
   }
 
@@ -103,7 +103,7 @@ object TestWorkflow extends IOApp {
         e.context.result = Json.obj(
           "name" -> "job training".asJson
         )
-        Future.successful(Completed)
+        Future.successful(Finished)
     }
   }
 

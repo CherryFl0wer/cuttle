@@ -4,7 +4,7 @@ import cats.effect._
 import cats.implicits._
 import com.criteo.cuttle._
 import com.criteo.cuttle.flow._
-import com.criteo.cuttle.flow.signals.{KafkaConfig, KafkaNotification, SignallingJob}
+import com.criteo.cuttle.flow.utils.JobUtils
 
 import scala.concurrent.Future
 
@@ -22,13 +22,14 @@ object TestWorkflow2 extends IOApp {
 
   def run(args: List[String]): IO[ExitCode] = {
     // Normally job are idempotent you can have one for all
-
+/*
+    // Fail part3 (part1 && part2 successAndError(S, E)) --> S get cycle
     val part1 = dataprepJob.successAndError(booJob, errorJob) && fooJob.successAndError(booJob, error2Job)
     val part2 = makeTrainJob --> makePredictionJob("Step-Training")
     val part3 = (part1 --> modellingJob && (part2 successAndError(modellingJob, error3Job)))
-    val wf = part3 successAndError(endJob, error4Job)
+    val wf = part3 successAndError(endJob, error4Job)*/
 
-
+    val wf = dataprepJob successAndError(booJob, errorJob)
     val run = FlowProject()(wf).start[IO]()
     val list = run.compile.toList.unsafeRunSync
     list.foreach(p => println(p))
@@ -37,7 +38,7 @@ object TestWorkflow2 extends IOApp {
   }
 
   private def jobs(howMuch : Int): Vector[Job[FlowScheduling]] = Vector.tabulate(howMuch)(i =>
-    Job(i.toString, FlowScheduling())((_: Execution[_]) => Future.successful(Completed))
+    Job(i.toString, FlowScheduling())((_: Execution[_]) => Future.successful(Finished))
   )
 
   private val errorJob = {
@@ -45,8 +46,7 @@ object TestWorkflow2 extends IOApp {
       implicit e =>
 
         e.streams.info("We got an error :'( ")
-
-        Future.successful(Completed)
+        Future.successful(Finished)
     }
   }
 
@@ -55,8 +55,7 @@ object TestWorkflow2 extends IOApp {
       implicit e =>
 
         e.streams.info("We got an error 2 :'( ")
-
-        Future.successful(Completed)
+        Future.successful(Finished)
     }
   }
 
@@ -65,8 +64,7 @@ object TestWorkflow2 extends IOApp {
       implicit e =>
 
         e.streams.info("We got an error 3 :'( ")
-
-        Future.successful(Completed)
+        Future { Finished }
     }
   }
 
@@ -75,17 +73,17 @@ object TestWorkflow2 extends IOApp {
       implicit e =>
 
         e.streams.info("We got an error 4 :'( ")
-
-        Future.successful(Completed)
+        Future { Finished }
     }
   }
+
   private val endJob = {
     Job("Step-End", FlowScheduling(), "Ending process") {
       implicit e =>
 
         e.streams.info("We got an End  :) ")
 
-        Future.successful(Completed)
+        Future.successful(Finished)
     }
   }
 
@@ -104,7 +102,7 @@ object TestWorkflow2 extends IOApp {
           "inputsWas" -> jsonInputs
         )
 
-        Future.successful(Completed)
+        Future.successful(Finished)
     }
   }
 
@@ -112,7 +110,7 @@ object TestWorkflow2 extends IOApp {
     Job("Step-Foo", FlowScheduling(), "Fooing") {
       implicit e: Execution[FlowScheduling] =>
         e.streams.info("Testing Foo")
-        Future.successful(Completed)
+        Future.successful(Finished)
     }
   }
 
@@ -120,7 +118,7 @@ object TestWorkflow2 extends IOApp {
     Job("Step-Modelling", FlowScheduling(), "modeling") {
       implicit e =>
         e.streams.info("Testing Modelling")
-        Future.successful(Completed)
+        Future.successful(Finished)
     }
   }
 
@@ -129,7 +127,7 @@ object TestWorkflow2 extends IOApp {
       implicit e =>
         e.streams.info("Testing MakePredic")
         e.streams.writeln(e.context.resultsFromPreviousNodes.get(prevStep).toString)
-        Future.successful(Completed)
+        Future.successful(Finished)
     }
   }
 
@@ -140,14 +138,15 @@ object TestWorkflow2 extends IOApp {
         e.context.result = Json.obj(
           "name" -> "job training".asJson
         )
-        Future.successful(Completed)
+        Future.successful(Finished)
     }
   }
 
   private val dataprepJob = {
     Job("Step-Dataprep", FlowScheduling(), "Data preparation") {
       implicit e =>
-        exec"""sh -c '
+
+        val waitShell = exec"""sh -c '
          |    echo Looping for 5 seconds...
          |    for i in `seq 1 5`
          |    do
@@ -157,6 +156,7 @@ object TestWorkflow2 extends IOApp {
          |    echo Ok
          |'""" ()
 
+        waitShell.flatMap(_ => JobUtils.failedJob("Job error failed"))
     }
   }
 }

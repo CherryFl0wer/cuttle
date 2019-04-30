@@ -13,6 +13,8 @@ import io.circe.syntax._
 import doobie._
 import doobie.implicits._
 
+import com.criteo.cuttle.{ utils => CriteoCoreUtils }
+
 private[flow] object Database {
   import FlowSchedulerUtils._
   import com.criteo.cuttle.Database._
@@ -75,7 +77,7 @@ private[flow] object Database {
     NoUpdate
   )
 
-  val doSchemaUpdates: ConnectionIO[Unit] = utils.updateSchema("flow", schema)
+  val doSchemaUpdates: ConnectionIO[Unit] = CriteoCoreUtils.updateSchema("flow", schema)
 
 
   def insertResult(wfId : String, stepId : String, inputs : Json, result : Json) = {

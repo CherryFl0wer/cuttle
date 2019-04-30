@@ -50,7 +50,7 @@ object HelloTimeSeries {
           e.streams.info(s"Hello 1 for $partitionToCompute")
           e.streams.info("Check my project page at https://github.com/criteo/cuttle")
           e.streams.info("Do it quickly! I will wait you here for 1 second")
-          e.park(1.seconds).map(_ => Completed)
+          e.park(1.seconds).map(_ => Finished)
       }
 
     // Our second job is also on hourly job that executes a sh script.
@@ -106,7 +106,7 @@ object HelloTimeSeries {
             // The completed value is returned to cuttle to announce the job execution as
             // successful. In this case the time series scheduler will mark the partition as
             // successful for job __hello3__ and store this information in his internal state.
-            Completed
+            Finished
           }
         }
       }

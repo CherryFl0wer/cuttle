@@ -9,14 +9,9 @@ import io.circe.syntax._
 private[flow] sealed trait JobFlowState
 private[flow] case class Done(projectVersion: String) extends JobFlowState
 private[flow] case class Running(executionId: String) extends JobFlowState
+private[flow] case class Failed(projectVersion : String) extends JobFlowState
 
 private[flow] object JobFlowState {
-  implicit val doneEncoder: Encoder[Done] = new Encoder[Done] {
-    def apply(done: Done) =
-      Json.obj(
-        "v" -> done.projectVersion.asJson
-      )
-  }
 
   implicit val doneDecoder: Decoder[Done] = new Decoder[Done] {
     def apply(c: HCursor): Decoder.Result[Done] =

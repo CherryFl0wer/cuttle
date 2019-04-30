@@ -26,14 +26,14 @@ object TestTimeSeriesWithManyJobs {
             tags = Set(Tag("hello"), Tag(s"hello-${i / 100}xx"))) { implicit e =>
           val partitionToCompute = e.context.start + "-" + e.context.end
           e.streams.info(s"Hello $i for $partitionToCompute")
-          Future.successful(Completed)
+          Future.successful(Finished)
         }
       })
       .foldLeft(Workflow.empty)(_ and _)
 
     val world: Job[TimeSeries] = Job("world", daily(UTC, start), "World", tags = Set(Tag("world"))) { implicit e =>
       e.streams.info("World!")
-      e.park(1.seconds).map(_ => Completed)
+      e.park(1.seconds).map(_ => Finished)
     }
 
     CuttleProject("Hello World", version = "123", env = ("dev", false)) {
