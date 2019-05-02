@@ -104,6 +104,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
   /*
   * Wrap around IO
+  * Adapt cleaner code without unsaferunSync?
   * */
   private[flow] def initialize(wf : Workload[FlowScheduling], xa : XA, logger : Logger) = {
     val workflow = wf.asInstanceOf[FlowWorkflow]
@@ -289,7 +290,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       Future
         .firstCompletedOf(running.map { case (_, _, done) => done })
         .onComplete {
-          case _ => cb(Right(runJobs(wf, executor, xa, running))) // Because if exception it is managed by a error job
+          case _ => cb(Right(runJobs(wf, executor, xa, running))) // Because exception are managed by an error job
         }
   }
 

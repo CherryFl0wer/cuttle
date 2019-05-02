@@ -26,7 +26,7 @@ object TestWorkflow2 extends IOApp {
     val js = jobs(7)
 
 
-    val wf = dataprepJob.error(errorJob) && js(1).error(errorJob)
+    val wf = dataprepJob.error(errorJob) && fooJob.error(errorJob)
     val wf2 = (wf --> (js(2).error(errorJob)) && js(3).error(error2Job))
     val wf3 = wf2 --> js(4).error(error2Job)
 
@@ -110,7 +110,7 @@ object TestWorkflow2 extends IOApp {
     Job("Step-Foo", FlowScheduling(), "Fooing") {
       implicit e: Execution[FlowScheduling] =>
         e.streams.info("Testing Foo")
-        Future.successful(Finished)
+        JobUtils.failedJob("Job error failed")
     }
   }
 
