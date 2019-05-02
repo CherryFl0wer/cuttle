@@ -13,7 +13,7 @@ object RoutingKind {
   case object Success extends Routing
   case object Failure extends Routing
 
-  val routes = Seq(Success, Failure)
+  val choices = Seq(Success, Failure)
 }
 
 trait FlowWorkflow extends Workload[FlowScheduling] {
@@ -38,9 +38,6 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     vertices.filter(!nodes.contains(_))
   }
 
-  private[cuttle] def isA(routingKind: RoutingKind.Routing)(vertex : FlowJob) = edges
-    .filter { case (_, child, kind) => kind == routingKind && child == vertex }
-    .size > 0
 
   // Returns a list of jobs in the workflow sorted topologically, using Kahn's algorithm. At the
   // same time checks that there is no cycle.
@@ -59,12 +56,24 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
   }
 
 
+  private[cuttle] def pathFromVertice(job : FlowJob, by: RoutingKind.Routing): Set[FlowJob]  = {
+    val childs = childsFromRoute(job, by)
+    if (!childs.isEmpty)
+      childs.foldLeft(Set.empty[FlowJob]) { case (acc, job) => acc + job ++ pathFromVertice(job, by) }
+    else
+      Set.empty
+  }
+
+  private[cuttle] def childFrom(kind : RoutingKind.Routing) : Set[FlowJob] =
+    edges
+      .filter { case (_, _, route) => route == kind }
+      .map { case (_, child, _) => child }
+
   private[cuttle] def childsFromRoute(job : FlowJob, kind: RoutingKind.Routing)  = edges
     .filter { case (current, _, route) => current == job && route == kind }
-    .map(_._2)
+    .map { case (_, child, _) => child }
 
-
-  private[cuttle] def childOf(vertice : FlowJob) : Set[FlowJob] = {
+  private[cuttle] def childsOf(vertice : FlowJob) : Set[FlowJob] = {
     if (leaves.contains(vertice)) Set.empty
     else edges.filter { case (current, _, _) => current == vertice }.map { case (_, child, _) => child }
   }
@@ -73,6 +82,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     if (roots.contains(vertice)) Set.empty
     else edges.filter { case (_, current, _) => current == vertice }.map { case (parent, _, _) => parent }
   }
+
 
 
 
@@ -105,43 +115,30 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
   def -->(success : FlowWorkflow) : FlowWorkflow = andThen((success, RoutingKind.Success))
 
 
-  /**
-    * Compose a [[FlowWorkflow]] with two [[FlowWorkflow]] one way lead to success the other to fail in case
-    * of a job failure the scheduler will be able to redirect to the good path
-    *
-    * @param success If left [[FlowWorkflow]] is a succesful future then execute this one
-    * @param fail In the other case execute this [[FlowWorkflow]]
-    */
-  def successAndError(success : FlowWorkflow, fail : FlowWorkflow) = {
+  def error(fail : FlowWorkflow) = {
     val leftWorkflow = this
 
-    // We take the branch that goes to success to build from this specific(s) vertice(s)
-    val successKindVertice = leftWorkflow.edges.filter { case (_, current, kind) => leftWorkflow.leaves.contains(current) && kind == RoutingKind.Success }.map(_._2)
-
-    val newEdgesSucc: Set[Dependency] = for {
-      v1 <- if (successKindVertice.isEmpty) leftWorkflow.leaves else successKindVertice
-      v2 <- success.roots
-    } yield (v1, v2, RoutingKind.Success)
-
     val newEdgesFail: Set[Dependency] = for {
-      v1 <- if (successKindVertice.isEmpty) leftWorkflow.leaves else successKindVertice
+      v1 <- leftWorkflow.leaves
       v2 <- fail.roots
     } yield (v1, v2, RoutingKind.Failure)
 
     new FlowWorkflow {
-      val vertices = leftWorkflow.vertices ++ success.vertices ++ fail.vertices
-      val edges = leftWorkflow.edges ++ success.edges ++ fail.edges ++ newEdgesSucc ++ newEdgesFail
+      val vertices = leftWorkflow.vertices ++ fail.vertices
+      val edges = leftWorkflow.edges ++ fail.edges ++ newEdgesFail
     }
   }
+
 
   def andThen(rightOperand : (FlowWorkflow, RoutingKind.Routing)): FlowWorkflow = {
 
     val leftWorkflow = this
     val (rightWorkflow, kindRoute) = rightOperand
 
-    val onlyKindVertice = leftWorkflow.edges.filter { case (_, current, kind) => leftWorkflow.leaves.contains(current) && kind == kindRoute }.map(_._2)
+    val routingWorkflow = FlowWorkflow.withKind(leftWorkflow, kindRoute)
+
     val newEdges: Set[Dependency] = for {
-      v1 <- if (onlyKindVertice.isEmpty) leftWorkflow.leaves else onlyKindVertice
+      v1 <- routingWorkflow.leaves
       v2 <- rightWorkflow.roots
     } yield (v1, v2, kindRoute)
 
@@ -189,6 +186,32 @@ object FlowWorkflow {
     }
   }
 
+
+  /** *
+    * Take off every jobs that does not come from a `kind` edge
+    * @param wf
+    * @param kind
+    * @return a new workflow without the `jobs` from `kind`
+    */
+  def withKind(wf : FlowWorkflow, kind : RoutingKind.Routing) = {
+
+    val setOfVertice = wf.edges.foldLeft(Set.empty[FlowJob]) { case (acc, edge) =>
+      val (parent, child, route) = edge
+      if (route == kind)
+        acc + parent + child
+      else
+        acc + parent
+    }
+
+    val newVertices = if (setOfVertice.isEmpty) wf.roots else setOfVertice
+    val newEdges = wf.edges.filter(p => p._3 == kind)
+
+    new FlowWorkflow {
+      def vertices = newVertices
+      def edges = newEdges
+    }
+  }
+
   /**
     * Validation of:
     * - absence of cycles in the workflow
@@ -223,10 +246,11 @@ object FlowWorkflow {
     workflow.edges
       .map { case (_, child, kind) => (child, kind) }
       .groupBy(_._1)
-      .foreach { case (job, values) => {
+      .foreach {
+        case (job, values) => {
           val kindSet = values.map(_._2)
-          kindSet.exists { kind => kind == RoutingKind.Success } && kindSet.exists { kind => kind == RoutingKind.Failure }
-          errors += s"${job.id} is both an error job and a success job"
+          val both = kindSet.exists { kind => kind == RoutingKind.Success } && kindSet.exists { kind => kind == RoutingKind.Failure }
+          if (both) errors += s"${job.id} is both an error job and a success job"
         }
       }
 

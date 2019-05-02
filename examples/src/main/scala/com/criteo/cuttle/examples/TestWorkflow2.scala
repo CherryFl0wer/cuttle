@@ -22,15 +22,15 @@ object TestWorkflow2 extends IOApp {
 
   def run(args: List[String]): IO[ExitCode] = {
     // Normally job are idempotent you can have one for all
-/*
-    // Fail part3 (part1 && part2 successAndError(S, E)) --> S get cycle
-    val part1 = dataprepJob.successAndError(booJob, errorJob) && fooJob.successAndError(booJob, error2Job)
-    val part2 = makeTrainJob --> makePredictionJob("Step-Training")
-    val part3 = (part1 --> modellingJob && (part2 successAndError(modellingJob, error3Job)))
-    val wf = part3 successAndError(endJob, error4Job)*/
 
-    val wf = dataprepJob successAndError(booJob, errorJob)
-    val run = FlowProject()(wf).start[IO]()
+    val js = jobs(7)
+
+
+    val wf = dataprepJob.error(errorJob) && js(1).error(errorJob)
+    val wf2 = (wf --> (js(2).error(errorJob)) && js(3).error(error2Job))
+    val wf3 = wf2 --> js(4).error(error2Job)
+
+    val run = FlowProject()(wf3).start[IO]()
     val list = run.compile.toList.unsafeRunSync
     list.foreach(p => println(p))
 
@@ -122,13 +122,11 @@ object TestWorkflow2 extends IOApp {
     }
   }
 
-  private val makePredictionJob = (prevStep : String) => {
-    Job("Step-MakePredic", FlowScheduling(), "predicting") {
+  private val makePredictionJob =  Job("Step-MakePredic", FlowScheduling(), "predicting") {
       implicit e =>
         e.streams.info("Testing MakePredic")
-        e.streams.writeln(e.context.resultsFromPreviousNodes.get(prevStep).toString)
+        e.streams.writeln(e.context.resultsFromPreviousNodes.get("Step-Training").toString)
         Future.successful(Finished)
-    }
   }
 
   private val makeTrainJob = {

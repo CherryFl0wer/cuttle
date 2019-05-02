@@ -11,9 +11,8 @@ import io.circe._
 import io.circe.syntax._
 
 import scala.concurrent.{Future}
-import scala.concurrent.stm.Txn.ExternalDecider
 import scala.concurrent.stm._
-
+import scala.collection.mutable.LinkedHashSet
 
 
 /** A [[FlowScheduler]] executes the [[com.criteo.cuttle.flow.FlowWorkflow Workflow]]
@@ -40,6 +39,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
   private val queries = Queries(logger)
 
+  private val discardedJob = new LinkedHashSet[FlowJob]()
 
   //TODO Adapt it no more exit and no print on the stack.
   private def runOrLogAndDie(thunk: => Unit, message: => String): Unit = {
@@ -61,8 +61,8 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
   private def currentJobsRunning(state : State) : Set[FlowJob] = atomic { implicit txn =>
     state.filter { case (_, jobState) =>
       jobState match {
-        case Done(_) => false
-        case _ => true
+        case Running(_) => true
+        case _ => false
       }
     }.keySet
   }
@@ -77,8 +77,8 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
   private def currentJobsFailed(state : State) : Set[FlowJob] = atomic { implicit txn =>
     state.filter { case (_, jobState) =>
       jobState match {
-        case Failed(_) => false
-        case _ => true
+        case Failed(_) => true
+        case _ => false
       }
     }.keySet
   }
@@ -155,23 +155,26 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
                               executor: Executor[FlowScheduling],
                               state : State): Seq[Executable] = {
 
-
-    val doneJob = currentJobsDone(state)
-    val newWorkflow = FlowWorkflow.without(workflow, doneJob)
-
     // Are those which are not running
-    def jobsAllowedToRun(nextJobs : Set[FlowJob]) =
-      nextJobs
+    def jobsAllowedToRun(nextJobs : Set[FlowJob]) = {
+      val x = nextJobs
         .filter { job => !currentJobsRunning(state).contains(job) }
-        .foldLeft(Set.empty[FlowJob]) { (acc, job) =>
+
+      x.foldLeft(Set.empty[FlowJob]) { (acc, job) =>
           if (currentJobsFailed(state).contains(job)) { // if the jobs has failed then we give its error path for next jobs
-            val errorChild = newWorkflow.childsFromRoute(job, RoutingKind.Failure)
+            val errorChild = workflow.childsFromRoute(job, RoutingKind.Failure)
+            workflow.pathFromVertice(job, RoutingKind.Success).foreach(discardedJob.add)
+            discardedJob.add(job)
             acc ++ errorChild
           } else acc + job // Normal success job
-        }
+      }
+    }
 
 
-    val roots = newWorkflow.roots //.filter(job => newWorkflow.isA(RoutingKind.Success)(job))
+    // Next jobs ? take off jobs done, discarded ones and error job
+    // Error job will be added by jobsAllowedToRungit
+    val newWorkflow = FlowWorkflow.without(workflow, currentJobsDone(state) ++ discardedJob.toSet ++ workflow.childFrom(RoutingKind.Failure))
+    val roots = newWorkflow.roots
     val toRun = jobsAllowedToRun(roots).map { j =>
       val parentOfJob = workflow.parentsOf(j) // Previous job
       val resultsFromParent = parentOfJob.foldLeft(Map.empty[String, Json])((acc, job) => atomic {
@@ -286,7 +289,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       Future
         .firstCompletedOf(running.map { case (_, _, done) => done })
         .onComplete {
-          case _ => cb(Right(runJobs(wf, executor, xa, running)))
+          case _ => cb(Right(runJobs(wf, executor, xa, running))) // Because if exception it is managed by a error job
         }
   }
 
