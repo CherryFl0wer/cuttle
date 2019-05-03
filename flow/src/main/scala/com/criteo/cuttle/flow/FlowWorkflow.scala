@@ -80,7 +80,10 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
 
   private[cuttle] def parentsOf(vertice : FlowJob) : Set[FlowJob] = {
     if (roots.contains(vertice)) Set.empty
-    else edges.filter { case (_, current, _) => current == vertice }.map { case (parent, _, _) => parent }
+    else {
+      val x = edges.filter { case (_, current, _) => current == vertice }
+      x.map { case (parent, _, _) => parent }
+    }
   }
 
 
@@ -115,17 +118,25 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
   def -->(success : FlowWorkflow) : FlowWorkflow = andThen((success, RoutingKind.Success))
 
 
+  /**
+    * Compose a [[FlowWorkflow]] and an job that will managed error coming from this.leaves
+    * @param fail the error job
+    * */
   def error(fail : FlowWorkflow) = {
     val leftWorkflow = this
 
+    if (fail.roots.isEmpty) leftWorkflow
+
+    val job = fail.roots.head // supposed to have only one error
+    val newJob = job.copy(id = job.id + s"-from-${leftWorkflow.leaves.map(_.id).mkString("-")}")(job.effect) // To avoid breaking at execution when error have the same id
+
     val newEdgesFail: Set[Dependency] = for {
       v1 <- leftWorkflow.leaves
-      v2 <- fail.roots
-    } yield (v1, v2, RoutingKind.Failure)
+    } yield (v1, newJob, RoutingKind.Failure)
 
     new FlowWorkflow {
-      val vertices = leftWorkflow.vertices ++ fail.vertices
-      val edges = leftWorkflow.edges ++ fail.edges ++ newEdgesFail
+      val vertices = leftWorkflow.vertices + newJob
+      val edges = leftWorkflow.edges ++ newEdgesFail
     }
   }
 

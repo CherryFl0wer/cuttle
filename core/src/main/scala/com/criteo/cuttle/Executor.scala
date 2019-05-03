@@ -930,7 +930,7 @@ class Executor[S <: Scheduling] private[cuttle] (
                         if (cancelNow) promise.tryFailure(ExecutionCancelled)
                       }
                     }
-                  case DontRun => execution.streams.error(s" Can't run this execution, stopping.")
+                  case DontRun => execution.streams.error(s" Can't run this execution.")
                 }
               }
 

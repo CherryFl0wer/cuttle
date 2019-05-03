@@ -157,23 +157,21 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
                               state : State): Seq[Executable] = {
 
     // Are those which are not running
-    def jobsAllowedToRun(nextJobs : Set[FlowJob]) = {
-      val x = nextJobs
+    def jobsAllowedToRun(nextJobs : Set[FlowJob]) =
+       nextJobs
         .filter { job => !currentJobsRunning(state).contains(job) }
-
-      x.foldLeft(Set.empty[FlowJob]) { (acc, job) =>
+        .foldLeft(Set.empty[FlowJob]) { (acc, job) =>
           if (currentJobsFailed(state).contains(job)) { // if the jobs has failed then we give its error path for next jobs
             val errorChild = workflow.childsFromRoute(job, RoutingKind.Failure)
             workflow.pathFromVertice(job, RoutingKind.Success).foreach(discardedJob.add)
             discardedJob.add(job)
             acc ++ errorChild
           } else acc + job // Normal success job
-      }
-    }
+        }
 
 
     // Next jobs ? take off jobs done, discarded ones and error job
-    // Error job will be added by jobsAllowedToRungit
+    // Error job will be added by jobsAllowedToRun
     val newWorkflow = FlowWorkflow.without(workflow, currentJobsDone(state) ++ discardedJob.toSet ++ workflow.childFrom(RoutingKind.Failure))
     val roots = newWorkflow.roots
     val toRun = jobsAllowedToRun(roots).map { j =>

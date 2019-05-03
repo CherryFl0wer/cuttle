@@ -1,25 +1,24 @@
 package com.criteo.cuttle.flow
 
 import cats.effect.{ContextShift, IO, Timer}
-import com.criteo.cuttle.{Completed, Job, TestScheduling}
+import com.criteo.cuttle.{Execution, Finished, Job, TestScheduling}
 
 import scala.concurrent.duration._
 import org.scalatest._
 import com.criteo.cuttle.Utils.logger
-import com.criteo.cuttle.flow.FlowSchedulerUtils.RunJob
 
-import scala.concurrent.ExecutionContext
+import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.FiniteDuration
 
 /**
-  * @summary Functionals tests of the sub-library of scheduling `Flow` situated in [com.criteo.cuttle.flow._]
+  * @summary Functionals tests of the sub-library of scheduling `Flow` placed in [[com.criteo.cuttle.flow._]]
   *          - Testing workflow "browsing"
   *          - Testing job execution
   *
   *           PS: Job's are not sophisticated, they are simple,
   *           they are here to assure that execution is conform at what we expect
   *
-  * @Todo Own database for the tests
+  * @Todo specific database for the tests
   * */
 class FlowTestsSpec extends FunSuite with TestScheduling with Matchers {
 
@@ -27,10 +26,14 @@ class FlowTestsSpec extends FunSuite with TestScheduling with Matchers {
   implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
   implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
-  val job: Vector[Job[FlowScheduling]] = Vector.tabulate(6)(i => Job(s"job-${i.toString}", FlowScheduling())(completed))
+  val job: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job(s"job-${i.toString}", FlowScheduling())(completed))
+
+
+  val failedSideEffect: (Execution[_]) => Future[Nothing] = (_ : Execution[_]) => Future.failed(new Exception("Failed task"))
+  val failedJob: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job(s"failed-${i.toString}", FlowScheduling())(failedSideEffect))
 
   def waitingJob(id: String = "0", time : FiniteDuration) : Job[FlowScheduling] = Job(s"job-waiting-${id}", FlowScheduling()) { implicit e =>
-    e.park(time).map(_ => Completed)(ExecutionContext.global)
+    e.park(time).map(_ => Finished)(ExecutionContext.global)
   }
 
 
@@ -63,17 +66,59 @@ class FlowTestsSpec extends FunSuite with TestScheduling with Matchers {
     assert(FlowSchedulerUtils.validate(workflow).isRight, "workflow is not valid")
   }
 
-  test("it should validate workflow and operand with error branch") {
-    val workflow = job(0) --> job(1) successAndError (job(2), job(3))
+  test("it should validate workflow and operand with error edge") {
+    val workflow = job(0) --> job(1).error(job(3)) --> job(2)
 
     workflow.jobsInOrder.map(_.id) should contain theSameElementsInOrderAs List("job-0", "job-1", "job-2")
 
-    workflow.childOf(job(1)).map(_.id) should contain theSameElementsAs List("job-2", "job-3")
+    workflow.childsOf(job(1)).map(_.id) should contain theSameElementsAs List("job-2", "job-3-from-job-1")
 
     assert(FlowSchedulerUtils.validate(workflow).isRight, "workflow is not valid")
   }
 
+  test("it should validate workflow and operand with same error job") {
+    val workflow = job(0).error(job(3)) --> job(1) --> job(2).error(job(3))
 
+    workflow.jobsInOrder.map(_.id) should contain theSameElementsInOrderAs List("job-0", "job-1", "job-2")
+
+    workflow.childsOf(job(0)).map(_.id) should contain theSameElementsAs List("job-1", "job-3-from-job-0")
+
+    assert(FlowSchedulerUtils.validate(workflow).isRight, "workflow is not valid")
+  }
+
+  test("it should validate a more complex workflow") {
+    val errorJob1 = job(9)
+    val errorJob2 = job(8)
+
+    val wf = job(0).error(errorJob1) && job(1).error(errorJob1)
+    val wf2 = (wf --> (job(2).error(errorJob1)) && job(3).error(errorJob2))
+    val workflow = wf2 --> job(4).error(errorJob2)
+
+    workflow.jobsInOrder.map(_.id) should contain theSameElementsInOrderAs List("job-3", "job-0", "job-1", "job-2", "job-4")
+
+    val err = workflow.childsOf(job(1)).filter(j => j.id.startsWith(errorJob1.id)).head // .error(FlowJob) change the name of the job
+
+    workflow.parentsOf(err).map(_.id) should contain theSameElementsAs List("job-1")
+
+    assert(FlowSchedulerUtils.validate(workflow).isRight, "workflow is not valid")
+  }
+
+  test("it should validate a more complex workflow with an error binded on two job") {
+    val errorJob1 = job(9)
+    val errorJob2 = job(8)
+
+    val wf = (job(0) && job(1)).error(errorJob1)
+    val wf2 = (wf --> (job(2).error(errorJob1)) && job(3).error(errorJob2))
+    val workflow = wf2 --> job(4).error(errorJob2)
+
+    workflow.jobsInOrder.map(_.id) should contain theSameElementsInOrderAs List("job-3", "job-0", "job-1", "job-2", "job-4")
+
+    val err = workflow.childsOf(job(1)).filter(j => j.id.startsWith(errorJob1.id)).head // .error(FlowJob) change the name of the job
+
+    workflow.parentsOf(err).map(_.id) should contain theSameElementsAs List("job-1", "job-0")
+
+    assert(FlowSchedulerUtils.validate(workflow).isRight, "workflow is not valid")
+  }
 
   test("it should validate workflow without cycles (one parent with many children)") {
     val job1: Vector[Job[FlowScheduling]] =
@@ -157,14 +202,34 @@ class FlowTestsSpec extends FunSuite with TestScheduling with Matchers {
     browse.last should contain theSameElementsAs List.empty
   }
 
-  /*
+
   test("it should execute a tree like form (success only)") {
-    val part1 = (job(0) && waitingJob("1", 3 seconds)) --> job(3)
+    val part1 = (job(0) && waitingJob(time = 3.seconds)) --> job(3)
     val part2 = job(2) --> job(4)
     val wf = (part1 && part2) --> job(5)
 
     val project = FlowProject("test02", "Test  of jobs execution")(wf)
     val browse = project.start[IO]().compile.toList.unsafeRunSync
-  } */
 
+
+
+    val testingList = List(
+      List("job-0", "job-2", "job-waiting-0"),
+      List("job-2", "job-waiting-0"),
+      List("job-waiting-0", "job-4"),
+      List("job-waiting-0"),
+      List("job-3"),
+      List("job-5")
+    )
+
+    var x = 0
+    browse.slice(0, browse.length-1).foreach { runnedJobs =>
+      runnedJobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
+      x += 1
+    }
+
+    browse.last should contain theSameElementsAs List.empty
+  }
+
+  //TODO Add a test fail on a success only workflow
 }

@@ -4,35 +4,35 @@ import cats.effect.{ContextShift, IO, Timer}
 import com.criteo.cuttle.Utils.logger
 import com.criteo.cuttle.flow.FlowSchedulerUtils.FlowJob
 import com.criteo.cuttle.flow.signals.{KafkaConfig, KafkaNotification, SignallingJob}
-import com.criteo.cuttle.{Completed, Job, TestScheduling}
+import com.criteo.cuttle.{Execution, Finished, Job, TestScheduling}
 import org.scalatest.Matchers
 import org.scalatest.FunSuite
 
-import scala.concurrent.{ExecutionContext}
+import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
 
 /**
-  * @summary Functionals tests of the sub-library of scheduling `Flow` situated in [com.criteo.cuttle.flow._]
+  * @summary Functionals tests of the sub-library of scheduling `Flow` placed in [[com.criteo.cuttle.flow._]]
   *          - Testing signals
   *
   *           PS: Job's are not sophisticated, they are simple,
   *           they are here to assure that execution is conform at what we expect
   *
-  * @Todo Own database for the tests
   * */
 class FlowSignalTestsSpec extends FunSuite with TestScheduling with Matchers {
 
   implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
   implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
-  val job: Vector[Job[FlowScheduling]] = Vector.tabulate(6)(i => Job(s"job-${i.toString}", FlowScheduling())(completed))
+  val job: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job(s"job-${i.toString}", FlowScheduling())(completed))
 
   def waitingJob(time : FiniteDuration) : Job[FlowScheduling] = Job("job-waiting", FlowScheduling()) { implicit e =>
-    e.park(time).map(_ => Completed)(ExecutionContext.global)
+    e.park(time).map(_ => Finished)(ExecutionContext.global)
   }
 
 
-
+  val failedSideEffect: (Execution[_]) => Future[Nothing] = (_ : Execution[_]) => Future.failed(new Exception("Failed task")) // Move to TestScheduling
+  val failedJob: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job(s"failed-${i.toString}", FlowScheduling())(failedSideEffect))
 
   test("Signal sync") {
     val flowTestSignalTopic = new KafkaNotification[String, String](KafkaConfig(
@@ -62,7 +62,8 @@ class FlowSignalTestsSpec extends FunSuite with TestScheduling with Matchers {
     }
   }
 
-  test("Job signal") {
+
+  test("Job signal on simple workflow `success only job`") {
 
     val flowTestSignalTopic = new KafkaNotification[String, String](KafkaConfig(
       topic = "test-signal",
@@ -99,6 +100,58 @@ class FlowSignalTestsSpec extends FunSuite with TestScheduling with Matchers {
       x += 1
     }
   }
+
+
+  test("Multiple signals on a more complex workflow `success only job`") {
+
+    import fs2.Stream
+
+    val flowTestSignalTopic = new KafkaNotification[String, String](KafkaConfig(
+      topic = "test-signal",
+      groupId = "flow-signal-test-consumer",
+      servers = List("localhost:9092")))
+
+    val signalJ1 = SignallingJob.kafka("job-3-signal-test", "signal-03-test", flowTestSignalTopic)
+    val signalJ2 = SignallingJob.kafka("job-6-signal-test", "signal-06-test", flowTestSignalTopic)
+
+    val wf = job(0) --> (job(1) && job(2)) --> signalJ1 --> (job(4) && job(5)) --> (job(6) && signalJ2) --> job(7)
+
+    val project = FlowProject("test04", "Test of jobs signals")(wf)
+
+    val toPush1 = flowTestSignalTopic.pushOne((project.workflowId, "signal-03-test"))
+    val toPush2 = flowTestSignalTopic.pushOne((project.workflowId, "signal-06-test"))
+
+    val pusher = Stream.awakeEvery[IO](5 seconds).head
+      .flatMap { _ => toPush1 }
+      .flatMap { _ =>
+        Stream.awakeEvery[IO](4 seconds).head.flatMap(_ => toPush2)
+      }
+
+    val actions = project.start[IO]()
+
+    val done = actions.concurrently(pusher).concurrently(flowTestSignalTopic.consume)
+
+    val res = done.compile.toList.unsafeRunSync()
+
+    val testingList = List(
+      List("job-0"),
+      List("job-1", "job-2"),
+      List("job-3-signal-test"),
+      List("job-4", "job-5"),
+      List("job-5"),
+      List("job-6", "job-6-signal-test"),
+      List("job-6-signal-test"),
+      List("job-7"),
+      List.empty
+    )
+
+    var x = 0
+    res.foreach { runnedJobs =>
+      runnedJobs.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
+      x += 1
+    }
+  }
+
 }
 
 
