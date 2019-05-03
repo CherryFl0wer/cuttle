@@ -118,14 +118,12 @@ class FlowSignalTestsSpec extends FunSuite with TestScheduling with Matchers {
 
     val project = FlowProject("test04", "Test of jobs signals")(wf)
 
-    val toPush1 = flowTestSignalTopic.pushOne((project.workflowId, "signal-03-test"))
-    val toPush2 = flowTestSignalTopic.pushOne((project.workflowId, "signal-06-test"))
-
-    val pusher = Stream.awakeEvery[IO](5 seconds).head
-      .flatMap { _ => toPush1 }
-      .flatMap { _ =>
-        Stream.awakeEvery[IO](4 seconds).head.flatMap(_ => toPush2)
-      }
+    val pusher = for {
+      _ <- Stream.awakeEvery[IO](5 seconds).head
+      firstSig <- flowTestSignalTopic.pushOne((project.workflowId, "signal-03-test"))
+      _ <- Stream.awakeEvery[IO](5 seconds).head
+      secondSig <- flowTestSignalTopic.pushOne((project.workflowId, "signal-06-test"))
+    } yield (firstSig, secondSig)
 
     val actions = project.start[IO]()
 
