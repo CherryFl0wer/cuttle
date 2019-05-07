@@ -30,8 +30,7 @@ object SignallingJob {
         .compile
         .last
         .unsafeToFuture()
-        .onComplete { cb =>
-          cb match {
+        .onComplete { cb => cb match {
             case Failure(err) => p.failure(new Exception(s"Job ${e.job.id} failed to complete correcty because ${err.getMessage}"))
             case Success(value) =>  {
               p.success(())

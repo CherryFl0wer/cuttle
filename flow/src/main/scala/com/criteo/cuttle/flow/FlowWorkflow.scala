@@ -87,8 +87,6 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
   }
 
 
-
-
   /**
     * Compose a [[FlowWorkflow]] with another [[FlowWorkflow]] but without any
     * dependency. It won't add any edge to the graph.
@@ -116,10 +114,27 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     */
 
   def -->(success : FlowWorkflow) : FlowWorkflow = andThen((success, RoutingKind.Success))
+  def andThen(rightOperand : (FlowWorkflow, RoutingKind.Routing)): FlowWorkflow = {
 
+    val leftWorkflow = this
+    val (rightWorkflow, kindRoute) = rightOperand
+
+    val routingWorkflow = FlowWorkflow.withKind(leftWorkflow, kindRoute)
+
+    val newEdges: Set[Dependency] = for {
+      v1 <- routingWorkflow.leaves
+      v2 <- rightWorkflow.roots
+    } yield (v1, v2, kindRoute)
+
+    new FlowWorkflow {
+      val vertices = leftWorkflow.vertices ++ rightWorkflow.vertices
+      val edges = leftWorkflow.edges ++ rightWorkflow.edges ++ newEdges
+    }
+  }
 
   /**
-    * Compose a [[FlowWorkflow]] and an job that will managed error coming from this.leaves
+    * Compose a [[FlowWorkflow]] and an job that will managed error coming from `this.leaves`
+    * error will also change `fail`.id to avoid having the same name in the database causing backslash
     * @param fail the error job
     * */
   def error(fail : FlowWorkflow) = {
@@ -138,26 +153,6 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
       val vertices = leftWorkflow.vertices + newJob
       val edges = leftWorkflow.edges ++ newEdgesFail
     }
-  }
-
-
-  def andThen(rightOperand : (FlowWorkflow, RoutingKind.Routing)): FlowWorkflow = {
-
-    val leftWorkflow = this
-    val (rightWorkflow, kindRoute) = rightOperand
-
-    val routingWorkflow = FlowWorkflow.withKind(leftWorkflow, kindRoute)
-
-    val newEdges: Set[Dependency] = for {
-      v1 <- routingWorkflow.leaves
-      v2 <- rightWorkflow.roots
-    } yield (v1, v2, kindRoute)
-
-    new FlowWorkflow {
-      val vertices = leftWorkflow.vertices ++ rightWorkflow.vertices
-      val edges = leftWorkflow.edges ++ rightWorkflow.edges ++ newEdges
-    }
-
   }
 
 

@@ -28,31 +28,32 @@ object FlowSchedulerUtils {
   }
 
 
+  import fs2.{Pipe, Pull, Stream}
   /***
     * Execute `call` each time there is a new value inside the stream
-    * @param call Every time a result is added to the stream then execute this function
+    * @param call Every time a result is added to the stream then execute this function that consume the last element
+    *             of the stream
     * @param over Predicate, if return true then stop trampoline otherwise keep going
     * @return the stream with the different result trampolined
     */
-  import fs2.{Pipe, Pull, Stream}
   def trampoline[F[_], O](call : O => F[O], over : O => Boolean) : Pipe[F, O, O] = {
 
-    def go(s: Stream[F,O]): Pull[F,O,Unit] = {
+    def go(s: Stream[F, O]): Pull[F, O, Unit] = {
       s.pull.uncons.flatMap {
         case Some((hd,tl)) =>
           hd.size match {
             case m if m >= 1 => { // Whatever the size is, we want the head
               val elm = hd.head.get
-              Pull.output(hd.take(1)) >> (
-                if (over(elm)) Pull.done
-                else go(Stream.eval(call(elm)))
+              Pull.output(hd.take(1)) >> (if (over(elm)) Pull.done else go(Stream.eval(call(elm)))
                 )
+
             }
             case 0 => Pull.done // No element in chunks then done
           }
         case None => Pull.done
       }
     }
+
     in => go(in).stream
   }
 

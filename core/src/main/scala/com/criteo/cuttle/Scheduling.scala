@@ -28,7 +28,8 @@ trait Scheduler[S <: Scheduling] extends MetricProvider[S] {
     * @param xa The doobie transactor to use to persist the scheduler state if needed.
     * @param logger The logger to use to log internal debug state if needed.
     */
-  def start(jobs: Workload[S], executor: Executor[S], xa: XA, logger: Logger): Unit
+  //def start(jobs: Workload[S], executor: Executor[S], xa: XA, logger: Logger): Unit
+
 
 
   /** Provide a doobie SQL `Fragment` used to retrieve all execution contexts from

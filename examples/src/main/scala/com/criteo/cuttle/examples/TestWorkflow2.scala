@@ -1,7 +1,6 @@
 package com.criteo.cuttle.examples
 
 import cats.effect._
-import cats.implicits._
 import com.criteo.cuttle._
 import com.criteo.cuttle.flow._
 import com.criteo.cuttle.flow.utils.JobUtils
@@ -27,10 +26,10 @@ object TestWorkflow2 extends IOApp {
 
 
     val wf = dataprepJob.error(errorJob) && fooJob.error(errorJob)
-    val wf2 = (wf --> (js(2).error(errorJob)) && js(3).error(error2Job))
+    val wf2 = (wf --> js(2).error(errorJob)) && js(3).error(error2Job)
     val wf3 = wf2 --> js(4).error(error2Job)
 
-    val run = FlowProject()(wf3).start[IO]()
+    val run = FlowProject()(wf3).start()
     val list = run.compile.toList.unsafeRunSync
     list.foreach(p => println(p))
 
@@ -122,11 +121,13 @@ object TestWorkflow2 extends IOApp {
     }
   }
 
-  private val makePredictionJob =  Job("Step-MakePredic", FlowScheduling(), "predicting") {
+  private val makePredictionJob =  {
+    Job("Step-MakePredic", FlowScheduling(), "predicting") {
       implicit e =>
         e.streams.info("Testing MakePredic")
         e.streams.writeln(e.context.resultsFromPreviousNodes.get("Step-Training").toString)
         Future.successful(Finished)
+  }
   }
 
   private val makeTrainJob = {

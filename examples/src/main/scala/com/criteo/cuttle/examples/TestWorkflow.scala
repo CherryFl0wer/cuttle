@@ -35,7 +35,7 @@ object TestWorkflow extends IOApp {
 
     val wf = (((dataprepJob && fooJob) --> booJob) && (makeTrainJob --> makePredictionJob("Step-Training"))) --> (modellingJob)
 
-    val run = FlowProject()(wf).start[IO]()
+    val run = FlowProject()(wf).start()
     val list = run.compile.toList.unsafeRunSync
     list.foreach(p => println(p))
 

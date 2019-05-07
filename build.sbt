@@ -119,14 +119,6 @@ lazy val cuttle =
       ).map(_ % "it,test")
     )
 
-lazy val timeseries =
-  (project in file("timeseries"))
-    .settings(commonSettings: _*)
-    .settings(
-      libraryDependencies ++= Seq(
-        "ch.vorburger.mariaDB4j" % "mariaDB4j" % "2.3.0" % "test"
-      ))
-    .dependsOn(cuttle % "compile->compile;test->test")
 
 
 lazy val flow =
@@ -141,10 +133,6 @@ lazy val flow =
 lazy val examples =
   (project in file("examples"))
     .settings(commonSettings: _*)
-    .settings(
-      libraryDependencies ++= Seq(
-        "ch.vorburger.mariaDB4j" % "mariaDB4j" % "2.3.0" % "test"
-      ))
     .settings(
       fork in Test := true,
       connectInput in Test := true,
@@ -163,7 +151,7 @@ lazy val examples =
           ))
         .getOrElse(Nil): _*
     )
-    .dependsOn(cuttle, timeseries, flow)
+    .dependsOn(cuttle, flow)
 
 lazy val root =
   (project in file("."))
@@ -201,6 +189,6 @@ lazy val root =
             .toMap
         )
       },
-      unidocProjectFilter in (ScalaUnidoc, unidoc) := inProjects(cuttle, timeseries, flow)
+      unidocProjectFilter in (ScalaUnidoc, unidoc) := inProjects(cuttle, flow)
     )
     .aggregate(cuttle)

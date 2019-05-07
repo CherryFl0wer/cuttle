@@ -91,7 +91,7 @@ class FlowTestsSpec extends FunSuite with TestScheduling with Matchers {
     val errorJob2 = job(8)
 
     val wf = job(0).error(errorJob1) && job(1).error(errorJob1)
-    val wf2 = (wf --> (job(2).error(errorJob1)) && job(3).error(errorJob2))
+    val wf2 = (wf --> job(2).error(errorJob1)) && job(3).error(errorJob2)
     val workflow = wf2 --> job(4).error(errorJob2)
 
     workflow.jobsInOrder.map(_.id) should contain theSameElementsInOrderAs List("job-3", "job-0", "job-1", "job-2", "job-4")
@@ -108,7 +108,7 @@ class FlowTestsSpec extends FunSuite with TestScheduling with Matchers {
     val errorJob2 = job(8)
 
     val wf = (job(0) && job(1)).error(errorJob1)
-    val wf2 = (wf --> (job(2).error(errorJob1)) && job(3).error(errorJob2))
+    val wf2 = (wf --> job(2).error(errorJob1)) && job(3).error(errorJob2)
     val workflow = wf2 --> job(4).error(errorJob2)
 
     workflow.jobsInOrder.map(_.id) should contain theSameElementsInOrderAs List("job-3", "job-0", "job-1", "job-2", "job-4")
@@ -136,29 +136,33 @@ class FlowTestsSpec extends FunSuite with TestScheduling with Matchers {
 
 
   test("it should execute in order the jobs correctly with waiting job (success only)") {
-    val wf = (job(0) && waitingJob("0", 3 seconds)) --> job(1) --> job(2)
+    val wf = (job(0) && waitingJob("0", 3.seconds)) --> job(1) --> job(2)
     val project = FlowProject("test01", "Test of jobs execution")(wf)
-    val browse = project.start[IO]().compile.toList.unsafeRunSync
+    val browse = project.start().compile.toList.unsafeRunSync
     val testingList = List(
       List("job-0", "job-waiting-0"),
       List("job-waiting-0"),
       List("job-1"),
-      List("job-2"),
-      List.empty
+      List("job-2")
     )
 
     var x = 0
-    browse.foreach { runnedJobs =>
-        runnedJobs.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
-        x += 1
+
+    browse.slice(0, browse.length-1).foreach { runnedJobs =>
+      runnedJobs should be ('right)
+      val jobs = runnedJobs.right.get
+      jobs.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
+      x += 1
     }
+
+    browse.last shouldBe Right(Set.empty)
   }
 
 
   test("it should execute sequential `and` (success only)") {
     val wf = job(0) --> (job(1) && job(2)) --> (job(3) && job(4))
     val project = FlowProject("test02", "Test  of jobs execution")(wf)
-    val browse = project.start[IO]().compile.toList.unsafeRunSync
+    val browse = project.start().compile.toList.unsafeRunSync
     val testingList = List(
       List("job-0"),
 
@@ -169,19 +173,23 @@ class FlowTestsSpec extends FunSuite with TestScheduling with Matchers {
       List("job-3", "job-4")
     )
 
+
     var x = 0
+
     browse.slice(0, browse.length-1).foreach { runnedJobs =>
-      runnedJobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
+      runnedJobs should be ('right)
+      val jobs = runnedJobs.right.get
+      jobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
       x += 1
     }
 
-    browse.last should contain theSameElementsAs List.empty
+    browse.last shouldBe Right(Set.empty)
   }
 
   test("it should execute in order with multiple waiting job (success only) ") {
-    val wf = (job(0) && job(1) && waitingJob("0",3 seconds)) --> job(2) --> (job(3) && waitingJob("1", 5 seconds)) --> job(4) --> job(5)
+    val wf = (job(0) && job(1) && waitingJob("0",3.seconds)) --> job(2) --> (job(3) && waitingJob("1", 5.seconds)) --> job(4) --> job(5)
     val project = FlowProject("test03", "Test  of jobs execution")(wf)
-    val browse = project.start[IO]().compile.toList.unsafeRunSync
+    val browse = project.start().compile.toList.unsafeRunSync
     val testingList = List(
       List("job-0", "job-1", "job-waiting-0"),
       List("job-0", "job-1", "job-waiting-0"),
@@ -194,24 +202,25 @@ class FlowTestsSpec extends FunSuite with TestScheduling with Matchers {
     )
 
     var x = 0
+
     browse.slice(0, browse.length-1).foreach { runnedJobs =>
-      runnedJobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
+      runnedJobs should be ('right)
+      val jobs = runnedJobs.right.get
+      jobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
       x += 1
     }
-
-    browse.last should contain theSameElementsAs List.empty
+    browse.last shouldBe Right(Set.empty)
   }
 
 
   test("it should execute a tree like form (success only)") {
+
     val part1 = (job(0) && waitingJob(time = 3.seconds)) --> job(3)
     val part2 = job(2) --> job(4)
     val wf = (part1 && part2) --> job(5)
 
     val project = FlowProject("test02", "Test  of jobs execution")(wf)
-    val browse = project.start[IO]().compile.toList.unsafeRunSync
-
-
+    val browse = project.start().compile.toList.unsafeRunSync
 
     val testingList = List(
       List("job-0", "job-2", "job-waiting-0"),
@@ -223,12 +232,15 @@ class FlowTestsSpec extends FunSuite with TestScheduling with Matchers {
     )
 
     var x = 0
+
     browse.slice(0, browse.length-1).foreach { runnedJobs =>
-      runnedJobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
+      runnedJobs should be ('right)
+      val jobs = runnedJobs.right.get
+      jobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
       x += 1
     }
 
-    browse.last should contain theSameElementsAs List.empty
+    browse.last shouldBe Right(Set.empty)
   }
 
   //TODO Add a test fail on a success only workflow

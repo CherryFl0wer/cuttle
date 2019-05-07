@@ -2,7 +2,6 @@ package com.criteo.cuttle.flow
 
 import cats.effect.{ContextShift, IO, Timer}
 import com.criteo.cuttle.Utils.logger
-import com.criteo.cuttle.flow.FlowSchedulerUtils.FlowJob
 import com.criteo.cuttle.flow.signals.{KafkaConfig, KafkaNotification, SignallingJob}
 import com.criteo.cuttle.{Execution, Finished, Job, TestScheduling}
 import org.scalatest.Matchers
@@ -44,20 +43,20 @@ class FlowSignalTestsSpec extends FunSuite with TestScheduling with Matchers {
     val msgSent = toPush.compile.toList.unsafeRunSync()
 
     val consumed = flowTestSignalTopic
-      .consumeAll
+      .consumeAll()
       .evalTap(msg => msg.committableOffset.commit)
-      .interruptAfter(5 seconds)
+      .interruptAfter(5.seconds)
       .compile
       .toList
       .unsafeRunSync()
 
 
-    consumed.size should be equals msgSent.size
+    consumed.size shouldBe msgSent.size
 
-    var x = 0;
+    var x = 0
     consumed.foreach { msg =>
-      msg.record.key should be equals msgSent(x).records._1.key
-      msg.record.value() should be equals msgSent(x).records._1.value
+      msg.record.key shouldBe msgSent(x).records._1.key
+      msg.record.value() shouldBe msgSent(x).records._1.value
       x += 1
     }
   }
@@ -78,9 +77,9 @@ class FlowSignalTestsSpec extends FunSuite with TestScheduling with Matchers {
 
     val toPush = flowTestSignalTopic.pushOne((project.workflowId, "signal-00-test"))
 
-    val pusher = fs2.Stream.awakeEvery[IO](5 seconds).head.flatMap(_ => toPush)
+    val pusher = fs2.Stream.awakeEvery[IO](5.seconds).head.flatMap(_ => toPush)
 
-    val actions = project.start[IO]()
+    val actions = project.start()
 
     val done = actions.concurrently(pusher).concurrently(flowTestSignalTopic.consume)
 
@@ -95,7 +94,8 @@ class FlowSignalTestsSpec extends FunSuite with TestScheduling with Matchers {
     )
 
     var x = 0
-    res.foreach { runnedJobs =>
+    res.map(_.right.get).foreach { runnedJobs =>
+      runnedJobs should be ('right)
       runnedJobs.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
       x += 1
     }
@@ -119,13 +119,13 @@ class FlowSignalTestsSpec extends FunSuite with TestScheduling with Matchers {
     val project = FlowProject("test04", "Test of jobs signals")(wf)
 
     val pusher = for {
-      _ <- Stream.awakeEvery[IO](5 seconds).head
+      _ <- Stream.awakeEvery[IO](5.seconds).head
       firstSig <- flowTestSignalTopic.pushOne((project.workflowId, "signal-03-test"))
-      _ <- Stream.awakeEvery[IO](5 seconds).head
+      _ <- Stream.awakeEvery[IO](5.seconds).head
       secondSig <- flowTestSignalTopic.pushOne((project.workflowId, "signal-06-test"))
     } yield (firstSig, secondSig)
 
-    val actions = project.start[IO]()
+    val actions = project.start()
 
     val done = actions.concurrently(pusher).concurrently(flowTestSignalTopic.consume)
 
@@ -144,7 +144,60 @@ class FlowSignalTestsSpec extends FunSuite with TestScheduling with Matchers {
     )
 
     var x = 0
-    res.foreach { runnedJobs =>
+    res.map(_.right.get).foreach { runnedJobs =>
+      runnedJobs should be ('right)
+      runnedJobs.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
+      x += 1
+    }
+  }
+
+
+  test("Multiple signals on a more complex workflow with errors") {
+
+    import fs2.Stream
+
+    val flowTestSignalTopic = new KafkaNotification[String, String](KafkaConfig(
+      topic = "test-signal",
+      groupId = "flow-signal-test-consumer",
+      servers = List("localhost:9092")))
+
+    val signalJ1 = SignallingJob.kafka("job-3-signal-test", "signal-03-test", flowTestSignalTopic)
+    val signalJ2 = SignallingJob.kafka("job-6-signal-test", "signal-06-test", flowTestSignalTopic)
+    val errorJob = job(9)
+
+    // it is possible to catch error on a signal because signal job return an exception
+    val wf = job(0) --> (job(1) && job(2)) --> signalJ1.error(errorJob) --> (job(4) && job(5)) --> (job(6) && signalJ2) --> job(7)
+
+    val project = FlowProject("test04", "Test of jobs signals")(wf)
+
+    val pusher = for {
+      _ <- Stream.awakeEvery[IO](5.seconds).head
+      firstSig <- flowTestSignalTopic.pushOne((project.workflowId, "signal-03-test"))
+      _ <- Stream.awakeEvery[IO](5.seconds).head
+      secondSig <- flowTestSignalTopic.pushOne((project.workflowId, "signal-06-test"))
+    } yield (firstSig, secondSig)
+
+    val actions = project.start()
+
+    val done = actions.concurrently(pusher).concurrently(flowTestSignalTopic.consume)
+
+    val res = done.compile.toList.unsafeRunSync()
+
+    val testingList = List(
+      List("job-0"),
+      List("job-1", "job-2"),
+      List("job-3-signal-test"),
+      List("job-4", "job-5"),
+      List("job-5"),
+      List("job-6", "job-6-signal-test"),
+      List("job-6-signal-test"),
+      List("job-7"),
+      List.empty
+    )
+
+    var x = 0
+    res.map(_.right.get).foreach { runnedJobs =>
+      runnedJobs should be ('right)
       runnedJobs.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
       x += 1
     }
