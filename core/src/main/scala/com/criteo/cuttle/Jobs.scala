@@ -19,14 +19,14 @@ case class Tag(name: String, description: String = "")
 
 /** The job [[SideEffect]] is the most important part as it represents the real
   * job logic to execute. A job is defined for a given [[Scheduling]],
-  * for example it can be a [[timeseries.TimeSeries TimeSeries]] job. Jobs are also [[Workflow]] with a
+  * for example it can be a [[com.criteo.cuttle.flow Flow]] job. Jobs are also [[Workflow]] with a
   * single vertice.
   *
   * @tparam S The kind of [[Scheduling]] used by this job.
   * @param id The internal job id. It will be sued to track the job state in the database, so it must not
   *           change over time otherwise the job will be seen as a new one by the scheduler.
   *           That id, being technical, should only use valid characters such as [a-zA-Z0-9_-.]
-  * @param scheduling The scheduling configuration for the job. For example a [[timeseries.TimeSeries TimeSeries]] job can
+  * @param scheduling The scheduling configuration for the job. For example a [[com.criteo.cuttle.flow Flow]] job can
   *                   be configured to be hourly or daily, etc.
   * @param name The job name as displayed in the UI.
   * @param description The job description as displayed in the UI.

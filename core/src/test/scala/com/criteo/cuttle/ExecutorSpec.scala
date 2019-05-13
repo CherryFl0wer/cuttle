@@ -1,10 +1,10 @@
 package com.criteo.cuttle
 
-import java.sql.{Connection, ResultSet}
+import java.sql.{Connection, ResultSet, PreparedStatement}
 
 import scala.concurrent.Future
 import cats.effect.IO
-import com.mysql.cj.jdbc.PreparedStatement
+import org.postgresql.jdbc._
 import doobie.util.transactor.Transactor
 import org.mockito.Matchers._
 import org.mockito.Mockito._

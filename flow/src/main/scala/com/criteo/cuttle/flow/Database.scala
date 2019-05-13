@@ -20,7 +20,7 @@ private[flow] object Database {
   import com.criteo.cuttle.Database._
 
 
-  val contextIdMigration: ConnectionIO[Unit] = {
+  lazy val contextIdMigration: ConnectionIO[Unit] = {
     implicit val jobs: Set[FlowJob] = Set.empty
     val chunkSize = 1024 * 10
     val stream = sql"SELECT id, json FROM flow_contexts"
@@ -40,37 +40,42 @@ private[flow] object Database {
         .compile
         .drain
       _ <- sql"""CREATE INDEX tmp_id ON tmp (id)""".update.run
-      _ <- sql"""UPDATE flow_contexts ctx JOIN tmp ON ctx.id = tmp.id
-                 SET ctx.id = tmp.new_id""".update.run
-      _ <- sql"""UPDATE executions JOIN tmp ON executions.context_id = tmp.id
-                 SET executions.context_id = tmp.new_id""".update.run
+      _ <-
+        sql"""UPDATE flow_contexts
+              SET id = tmp.new_id
+              FROM tmp WHERE flow_contexts.id = tmp.id
+        """.update.run
+      _ <- sql"""UPDATE executions
+                 SET context_id = tmp.new_id
+                 FROM tmp WHERE executions.context_id = tmp.id
+           """.update.run
     } yield ()
   }
 
   val schema = List(
     sql"""
       CREATE TABLE flow_state (
-        workflow_id  VARCHAR(1000) NOT NULL,
-        state       JSON NOT NULL,
-        date        DATETIME NOT NULL
-      ) ENGINE = INNODB;
+        workflow_id  TEXT NOT NULL,
+        state       JSONB NOT NULL,
+        date        TIMESTAMP WITHOUT TIME ZONE NOT NULL
+      );
 
       CREATE INDEX flow_state_workflowid ON flow_state (workflow_id);
       CREATE INDEX flow_state_by_date ON flow_state (date);
 
       CREATE TABLE flow_contexts (
-        id          VARCHAR(1000) NOT NULL,
-        json        JSON NOT NULL,
+        id          TEXT NOT NULL,
+        json        JSONB NOT NULL,
         PRIMARY KEY (id)
-      ) ENGINE = INNODB;
+      );
 
       CREATE TABLE flow_results (
-        workflow_id  VARCHAR(1000) NOT NULL,
-        step_id  VARCHAR(1000) NOT NULL,
-        inputs JSON NULL,
-        result JSON NULL,
+        workflow_id  TEXT NOT NULL,
+        step_id  TEXT NOT NULL,
+        inputs JSONB NULL,
+        result JSONB NULL,
         PRIMARY KEY(workflow_id, step_id)
-      ) ENGINE = INNODB;
+      );
 
     """.update.run,
     contextIdMigration,
@@ -118,12 +123,10 @@ private[flow] object Database {
 
   def serializeContext(context: FlowSchedulerContext): ConnectionIO[String] = {
     val id = context.toId
-    sql"""
-      REPLACE INTO flow_contexts (id, json)
-      VALUES (
-        ${id},
-        ${context.asJson}
-      )
+    sql"""INSERT INTO flow_contexts(id, json)
+          VALUES(${id}, ${context.asJson})
+          ON CONFLICT (id) DO UPDATE
+          SET json = excluded.json
     """.update.run *> Applicative[ConnectionIO].pure(id)
   }
 

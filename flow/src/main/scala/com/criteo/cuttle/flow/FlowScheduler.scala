@@ -278,10 +278,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
   }
 
 
-
-
-//  def start(jobs: Workload[FlowScheduling], executor: Executor[FlowScheduling], xa: XA, logger: Logger) : Unit = ()
-
   /***
     * Starts the scheduler for the given Workflow. Immediatly the scheduler will start interpreting
     * the workflow and generate [[Execution Executions]] sent to the provided [[Executor]].
@@ -297,7 +293,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
     fs2
       .Stream
-      .eval(runJobs(workflow, executor, xa, Set.empty))
+      .eval(runJobs(workflow, executor, xa, Set.empty)) // Init
       .through(trampoline(firstFinished(workflow, executor, xa), o => o.isLeft || o.toOption.get.isEmpty))
   }
 

@@ -42,6 +42,7 @@ private[cuttle] object ExecutionStreams {
   // By default our heuristic is 512Kb = 524288 bytes.
   // This can be overridden with com.criteo.cuttle.maxExecutionLogSize JVM property.
   // Note that we are limited by Int.maxValue
+  // @info When switching to Postgresql there is no more MediumText, converted Text.
 
   private val maxExecutionLogSizeProp = "com.criteo.cuttle.maxExecutionLogSize"
   private val maxExecutionLogSize = sys.props.get(maxExecutionLogSizeProp).map(_.toInt).getOrElse(524288)
@@ -111,6 +112,7 @@ private[cuttle] object ExecutionStreams {
   // These logs are stored in MySQL column with type MEDIUMTEXT.
   // This column can take up to 16,777,215 (224−1) bytes = 16 MiB.
   // By default our heuristic is maxExecutionLogSize.
+  // @info When switching to Postgresql there is no more MediumText, converted Text.
   // @param id UUID of execution
   // @return executions logs, truncated to size of maxExecutionLogSize
   def streamsAsString(id: ExecutionId): Option[String] = {

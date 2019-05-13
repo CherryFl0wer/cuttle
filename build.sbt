@@ -103,8 +103,9 @@ lazy val cuttle =
         "org.typelevel" %% "cats-effect" % "1.2.0",
         "codes.reactive" %% "scala-time" % "0.4.1",
         "com.zaxxer" % "nuprocess" % "1.1.0",
-        "mysql" % "mysql-connector-java" % "6.0.6",
-
+        //"mysql" % "mysql-connector-java" % "6.0.6",
+        "org.postgresql" % "postgresql" % "42.2.5",
+        "org.tpolecat" %% "doobie-postgres" % "0.6.0",
         "org.apache.kafka" %% "kafka" % "0.10.2.2",
         "org.scala-lang.modules" %% "scala-async" % "0.9.7"
       ),
