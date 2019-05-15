@@ -5,15 +5,14 @@ import java.time._
 
 import scala.concurrent.duration.Duration
 import cats.Applicative
-import cats.data.OptionT
+import cats.data.{EitherT, OptionT}
 import cats.implicits._
 import io.circe._
 import io.circe.generic.auto._
 import io.circe.syntax._
 import doobie._
 import doobie.implicits._
-
-import com.criteo.cuttle.{ utils => CriteoCoreUtils }
+import com.criteo.cuttle.{utils => CriteoCoreUtils}
 
 private[flow] object Database {
   import FlowSchedulerUtils._
@@ -52,6 +51,10 @@ private[flow] object Database {
     } yield ()
   }
 
+  /*
+  * Schema describing the different tables necessary to run FlowWorkflow
+  *
+  * */
   val schema = List(
     sql"""
       CREATE TABLE flow_state (
@@ -59,9 +62,19 @@ private[flow] object Database {
         state       JSONB NOT NULL,
         date        TIMESTAMP WITHOUT TIME ZONE NOT NULL
       );
-
       CREATE INDEX flow_state_workflowid ON flow_state (workflow_id);
       CREATE INDEX flow_state_by_date ON flow_state (date);
+
+      CREATE TABLE flow_results (
+        workflow_id  TEXT NOT NULL,
+        from_graph   VARCHAR(255) NOT NULL,
+        step_id  TEXT NOT NULL,
+        inputs JSONB NULL,
+        result JSONB NULL,
+        PRIMARY KEY(workflow_id, step_id)
+      );
+      CREATE INDEX flow_results_workflowid ON flow_results (workflow_id);
+      CREATE INDEX flow_results_stepid ON flow_results (step_id);
 
       CREATE TABLE flow_contexts (
         id          TEXT NOT NULL,
@@ -69,14 +82,12 @@ private[flow] object Database {
         PRIMARY KEY (id)
       );
 
-      CREATE TABLE flow_results (
-        workflow_id  TEXT NOT NULL,
-        step_id  TEXT NOT NULL,
-        inputs JSONB NULL,
-        result JSONB NULL,
-        PRIMARY KEY(workflow_id, step_id)
+      CREATE TABLE flow_graph (
+         id          TEXT NOT NULL,
+         json        JSONB NOT NULL,
+         PRIMARY KEY (id)
       );
-
+      CREATE INDEX flow_graph_id ON flow_graph (id);
     """.update.run,
     contextIdMigration,
     NoUpdate
@@ -85,11 +96,11 @@ private[flow] object Database {
   val doSchemaUpdates: ConnectionIO[Unit] = CriteoCoreUtils.updateSchema("flow", schema)
 
 
-  def insertResult(wfId : String, stepId : String, inputs : Json, result : Json) = {
+  def insertResult(wfHash : String, wfId : String, stepId : String, inputs : Json, result : Json) =
     sql"""
-          INSERT INTO flow_results (workflow_id, step_id, inputs, result) VALUES(${wfId}, ${stepId}, ${inputs}, ${result})
+          INSERT INTO flow_results (workflow_id, from_graph, step_id, inputs, result)
+          VALUES(${wfId}, ${wfHash}, ${stepId}, ${inputs}, ${result})
       """.update.run
-  }
 
   // TODO : Maybe return list or one response.
   def retrieveResult(wfId : String, stepId : String) =
@@ -100,9 +111,11 @@ private[flow] object Database {
     }.value
 
   /**
-  *  This is all the state management
-    *  Decoder and Encoder for the database
-  * */
+    * Decode the state
+    * @param json
+    * @param jobs
+    * @return a potential state
+    */
   def dbStateDecoder(json: Json)(implicit jobs: Set[FlowJob]): Option[State] = {
     type StoredState = List[(String, JobFlowState)]
     val stored = json.as[StoredState]
@@ -115,20 +128,14 @@ private[flow] object Database {
     }
   }
 
-  def dbStateEncoder(state: State): Json =
-    state.toList.map {
+  /**
+    * Encode the state
+    * @param state
+    * @return
+    */
+  def dbStateEncoder(state: State): Json = state.toList.map {
       case (job, flowState) =>  (job.id, flowState.asJson)
     }.asJson
-
-
-  def serializeContext(context: FlowSchedulerContext): ConnectionIO[String] = {
-    val id = context.toId
-    sql"""INSERT INTO flow_contexts(id, json)
-          VALUES(${id}, ${context.asJson})
-          ON CONFLICT (id) DO UPDATE
-          SET json = excluded.json
-    """.update.run *> Applicative[ConnectionIO].pure(id)
-  }
 
   def deserializeState(workflowId: String)(implicit jobs: Set[FlowJob]): ConnectionIO[Option[State]] = {
     OptionT {
@@ -149,7 +156,7 @@ private[flow] object Database {
     }
     val stateJson = dbStateEncoder(state)
 
-    for {
+     for {
       // Apply state retention if needed
       _ <- cleanStateBefore
         .map { t =>
@@ -159,7 +166,35 @@ private[flow] object Database {
       // Insert the latest state
       x <- sql"INSERT INTO flow_state (workflow_id, state, date) VALUES (${workflowid}, ${stateJson}, ${now})".update.run
     } yield x
+
   }
 
 
+  /**
+    * Serialize context
+    * @param context
+    * @return the id of the context
+    */
+  def serializeContext(context: FlowSchedulerContext): ConnectionIO[String] = {
+    val id = context.toId
+    sql"""INSERT INTO flow_contexts(id, json)
+          VALUES(${id}, ${context.asJson})
+          ON CONFLICT (id) DO UPDATE
+          SET json = excluded.json
+    """.update.run *> Applicative[ConnectionIO].pure(id)
+  }
+
+  /**
+    * Serialize the graph into the db
+    * @param workflow
+    * @return the hash of the workflow
+    */
+  def serializeGraph(workflow: FlowWorkflow) = {
+    val h = workflow.hash.toString
+    val serializedGraph = workflow.asJson
+    for {
+      _ <- EitherT(sql"""SELECT exists(SELECT 1 FROM flow_graph WHERE id=${h})""".query[Boolean].unique.attempt)
+      _ <- EitherT(sql"""INSERT INTO flow_graph VALUES(${h}, ${serializedGraph})""".update.run.attempt)
+    } yield ()
+  }
 }

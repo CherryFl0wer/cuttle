@@ -4,6 +4,7 @@ import com.criteo.cuttle.{Scheduling, Workload}
 import com.criteo.cuttle.flow.FlowSchedulerUtils._
 import io.circe._
 
+
 /**
   * A DAG workflow
   **/
@@ -18,12 +19,7 @@ object RoutingKind {
 
 trait FlowWorkflow extends Workload[FlowScheduling] {
 
-
   type Dependency = (FlowJob, FlowJob, RoutingKind.Routing)
-
-  def all = vertices
-
-  override def asJson(implicit se : Encoder[FlowJob]) = flowWFEncoder(se)(this)
 
   private[criteo] def vertices: Set[FlowJob]
   private[criteo] def edges: Set[Dependency]
@@ -32,12 +28,10 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     val nodes = edges.map { case (_, child, _) => child }
     vertices.filter(!nodes.contains(_))
   }
-
   private[cuttle] def leaves: Set[FlowJob] = {
     val nodes = edges.map { case (parent, _, _) => parent }
     vertices.filter(!nodes.contains(_))
   }
-
 
   // Returns a list of jobs in the workflow sorted topologically, using Kahn's algorithm. At the
   // same time checks that there is no cycle.
@@ -55,17 +49,15 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     }
   }
 
-
   private[cuttle] def pathFromVertice(job : FlowJob, by: RoutingKind.Routing): Set[FlowJob]  = {
     val childs = childsFromRoute(job, by)
-    if (!childs.isEmpty)
+    if (childs.nonEmpty)
       childs.foldLeft(Set.empty[FlowJob]) { case (acc, job) => acc + job ++ pathFromVertice(job, by) }
     else
       Set.empty
   }
 
-  private[cuttle] def childFrom(kind : RoutingKind.Routing) : Set[FlowJob] =
-    edges
+  private[cuttle] def childFrom(kind : RoutingKind.Routing) : Set[FlowJob] = edges
       .filter { case (_, _, route) => route == kind }
       .map { case (_, child, _) => child }
 
@@ -88,6 +80,11 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
 
 
   /**
+    *  Return an hash based on the edges of the workflow using MurmurHash3 from std lib
+    */
+    lazy val hash =  Math.abs(scala.util.hashing.MurmurHash3.arrayHash(edges.toArray))
+
+  /**
     * Compose a [[FlowWorkflow]] with another [[FlowWorkflow]] but without any
     * dependency. It won't add any edge to the graph.
     *
@@ -103,8 +100,6 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
       val edges = leftWorkflow.edges ++ otherWorflow.edges
     }
   }
-
-
 
   /**
     * Compose a [[FlowWorkflow]] with a second [[FlowWorkflow]] with a dependencies added between
@@ -156,7 +151,11 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
   }
 
 
+  // Inheriting from trait
 
+  def all = vertices
+
+  override def asJson(implicit se : Encoder[FlowJob]) = workflowEncoder(se)(this)
 }
 
 /** Utilities for [[FlowWorkflow]]. */

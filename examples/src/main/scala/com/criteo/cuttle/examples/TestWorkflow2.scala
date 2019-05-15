@@ -25,14 +25,14 @@ object TestWorkflow2 extends IOApp {
     val js = jobs(7)
 
 
-    val wf = dataprepJob.error(errorJob) && fooJob.error(errorJob)
+    val wf = dataprepJob.error(errorJob) && booJob.error(errorJob)
     val wf2 = (wf --> js(2).error(errorJob)) && js(3).error(error2Job)
     val wf3 = wf2 --> js(4).error(error2Job)
 
     val run = FlowProject()(wf3).start()
+
     val list = run.compile.toList.unsafeRunSync
     list.foreach(p => println(p))
-
     IO(ExitCode.Success)
   }
 
@@ -45,7 +45,7 @@ object TestWorkflow2 extends IOApp {
       implicit e =>
 
         e.streams.info("We got an error :'( ")
-        Future.successful(Finished)
+        Future { Finished }
     }
   }
 
@@ -54,7 +54,7 @@ object TestWorkflow2 extends IOApp {
       implicit e =>
 
         e.streams.info("We got an error 2 :'( ")
-        Future.successful(Finished)
+        Future { Finished }
     }
   }
 
@@ -109,7 +109,7 @@ object TestWorkflow2 extends IOApp {
     Job("Step-Foo", FlowScheduling(), "Fooing") {
       implicit e: Execution[FlowScheduling] =>
         e.streams.info("Testing Foo")
-        JobUtils.failedJob("Job error failed")
+        Future { Finished }
     }
   }
 
@@ -155,7 +155,7 @@ object TestWorkflow2 extends IOApp {
          |    echo Ok
          |'""" ()
 
-        waitShell.flatMap(_ => JobUtils.failedJob("Job error failed"))
+        waitShell //.flatMap(_ => JobUtils.failedJob("Job error failed"))
     }
   }
 }

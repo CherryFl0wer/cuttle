@@ -2,9 +2,8 @@ package com.criteo.cuttle.flow
 
 import java.time.Instant
 
-import cats.Monad
 import cats.data.EitherT
-import cats.effect.{Concurrent, IO, Sync}
+import cats.effect.IO
 import cats.implicits._
 import com.criteo.cuttle.ThreadPools.Implicits.sideEffectThreadPool
 import com.criteo.cuttle.ThreadPools._
@@ -34,12 +33,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
   private[flow] def results: Map[FlowJob, Json] = atomic { implicit txn => _results() }
 
-  private val _pausedJobs = Ref(Set.empty[PausedJob])
-
-  def pausedJobs(): Set[PausedJob] = atomic { implicit txn =>
-    _pausedJobs()
-  }
-
   private val queries = Queries(logger)
 
   private val discardedJob = new LinkedHashSet[FlowJob]()
@@ -52,18 +45,20 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
       }
     }.keySet
   }
+
   private def currentJobsDone(state : State) : Set[FlowJob] = atomic { implicit txn =>
     state.filter { case (_, jobState) =>
       jobState match {
-        case Done(_) => true
+        case Done => true
         case _ => false
       }
     }.keySet
   }
+
   private def currentJobsFailed(state : State) : Set[FlowJob] = atomic { implicit txn =>
     state.filter { case (_, jobState) =>
       jobState match {
-        case Failed(_) => true
+        case Failed => true
         case _ => false
       }
     }.keySet
@@ -72,14 +67,16 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
 
   /**
+    *  Save job's result in the database and in a map inmemory.
+    *  the map is here to avoid seeking for the result in the db every time we need it
+    * @param wfHash workflow hash
     * @param job the job to save
     * @param context the context of the job
     * @param xa doobie sql
-    * @summary Save job's result in the database and in a map inmemory.
-    *         the map is here to avoid seeking for the result in the db every time we need it
+    *           TODO
     * */
-  private def saveResult(job : FlowJob, context : FlowSchedulerContext, xa : XA) = {
-    Database.insertResult(workflowdId, job.id,  job.scheduling.inputs.asJson, context.result)
+  private def saveResult(wfHash : Int, job : FlowJob, context : FlowSchedulerContext, xa : XA) = {
+    Database.insertResult(wfHash.toString, workflowdId, job.id,  job.scheduling.inputs.asJson, context.result)
       .transact(xa)
       .unsafeRunSync()
 
@@ -103,29 +100,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     val workflow = wf.asInstanceOf[FlowWorkflow]
 
     logger.info("Validate flow workflow before start")
-/*
-    val fll = for {
-      err <- FlowSchedulerUtils.validate(workflow)
-      _ = logger.info("Flow Workflow is valid")
-      _ = logger.info("Applying migrations to database")
-      _ <- Database.doSchemaUpdates.transact(xa).attempt
-      _ = logger.info("Database up-to-date")
-      deserializeState <- Database.deserializeState(workflowdId)(workflow.vertices).transact(xa).attempt
-      _ = logger.info("Update state")
-      state <- deserializeState
-      st <- state
-      _ = atomic { implicit txn => _state() = st }
-      pausedJobsSeq <-  queries.getPausedJobs.transact(xa)
-      _ = atomic { implicit txn => _pausedJobs() = _pausedJobs() ++ pausedJobsSeq }
-    } yield err
-
-    fll match {
-      case Left(errors) =>
-        val consolidatedError = errors.mkString("\n")
-        logger.error(consolidatedError)
-        throw new IllegalArgumentException(consolidatedError)
-      case _ => workflow
-    } */
 
     FlowSchedulerUtils.validate(workflow) match {
       case Left(errors) =>
@@ -137,10 +111,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
     logger.info("Flow Workflow is valid")
 
-    logger.info("Applying migrations to database")
-    Database.doSchemaUpdates.transact(xa).unsafeRunSync
-    logger.info("Database up-to-date")
-
     logger.info("Update state")
     Database
       .deserializeState(workflowdId)(workflow.vertices)
@@ -151,10 +121,6 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
           implicit txn => _state() = state
         }
       }
-
-    atomic { implicit txn =>
-      _pausedJobs() = _pausedJobs() ++ queries.getPausedJobs.transact(xa).unsafeRunSync()
-    }
 
     workflow
   }
@@ -183,7 +149,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
             val errorChild = workflow.childsFromRoute(job, RoutingKind.Failure)
             errorChild.isEmpty match {
-              case true => acc // TODO do something if there is an error in a job but no job to catch it
+              case true => acc
               case _ => acc ++ errorChild
             }
           }
@@ -228,7 +194,7 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     val (stateSnapshot, toRun) = atomic { implicit txn =>
 
       def isDone(state: State, job: FlowJob): Boolean = state(job) match  {
-        case Done(_) => true
+        case Done => true
         case _       => false
       }
 
@@ -237,12 +203,12 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
         case (acc, (job, context, future)) =>
 
           if (future.value.get.isSuccess || isDone(_state(), job)) {
-            saveResult(job, context, xa)
-            acc + (job -> Done(context.projectVersion))
+            saveResult(workflow.hash, job, context, xa) // TODO : remove unsafeRunSync
+            acc + (job -> Done)
           }
           else if(future.value.get.isFailure) {
-            saveResult(job, context, xa)
-            acc + (job -> Failed(context.projectVersion))
+            saveResult(workflow.hash, job, context, xa) // TODO : remove unsafeRunSync
+            acc + (job -> Failed)
           }
           else acc
       }
