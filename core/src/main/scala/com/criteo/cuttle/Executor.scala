@@ -725,7 +725,7 @@ class Executor[S <: Scheduling] private[cuttle] (
     promise.completeWith(
       (Try(execution.run()) match { // Running side effect
         case Success(f) => f
-        case Failure(e) => if (execution.forcedSuccess.single()) Future.successful(Completed) else Future.failed(e)
+        case Failure(e) => if (execution.forcedSuccess.single()) Future.successful(Finished) else Future.failed(e)
       }).andThen {
           case Success(_) =>
             execution.streams.debug(s"Execution successful")
@@ -744,10 +744,10 @@ class Executor[S <: Scheduling] private[cuttle] (
               implicit tx =>
                 updateFinishedExecutionCounters(execution, "failure")
                 // retain jobs in recent failures if last failure happened in [now - retryStrategy.retryWindow, now]
+
                 recentFailures.retain {
                   case (_, (retryExecution, failingJob)) =>
-                    retryExecution.isDefined || failingJob.isLastFailureAfter(
-                      Instant.now.minus(retryStrategy.get.retryWindow))
+                    retryExecution.isDefined || (retryStrategy.isDefined && failingJob.isLastFailureAfter(Instant.now.minus(retryStrategy.get.retryWindow)))
                 }
                 val failureKey = (execution.job, execution.context)
                 val failingJob = recentFailures.get(failureKey).map(_._2).getOrElse(FailingJob(Nil, None))
@@ -930,7 +930,7 @@ class Executor[S <: Scheduling] private[cuttle] (
                         if (cancelNow) promise.tryFailure(ExecutionCancelled)
                       }
                     }
-                  case DontRun => execution.streams.error(s" Can't run this execution, stopping.")
+                  case DontRun => execution.streams.error(s" Can't run this execution.")
                 }
               }
 

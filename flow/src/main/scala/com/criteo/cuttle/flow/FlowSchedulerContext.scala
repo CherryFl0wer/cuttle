@@ -3,7 +3,6 @@ package com.criteo.cuttle.flow
 import java.time.Instant
 import java.util.{Comparator, UUID}
 
-import cats._
 import com.criteo.cuttle.SchedulingContext
 import doobie.free.connection.ConnectionIO
 import io.circe._
@@ -17,7 +16,10 @@ case class FlowSchedulerContext(start : Instant,
                                 workflowId : String,
                                 resultsFromPreviousNodes : Map[String, Json] = Map.empty) extends SchedulingContext {
 
-  var result : Json = Json.Null // Response of the job that will be saved in the database and store in a map during exec
+  import cats.free.Free
+
+  // Is the result of the job
+  var result : Json = Json.Null
 
   override def asJson: Json = FlowSchedulerContext.encoder(this)
 

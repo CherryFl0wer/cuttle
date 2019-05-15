@@ -27,7 +27,7 @@ trait TestScheduling {
     def toJson: Json = Json.Null
   }
 
-  val completed: (Execution[_]) => Future[Completed.type] = (_: Execution[_]) => Future.successful(Completed)
+  val completed: (Execution[_]) => Future[Completed] = (_: Execution[_]) => Future.successful(Finished)
 
   val testScheduling = TestScheduling()
 }

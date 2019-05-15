@@ -1,56 +1,90 @@
 package com.criteo.cuttle.examples
 
 import cats.effect._
-import cats.implicits._
 import com.criteo.cuttle._
 import com.criteo.cuttle.flow._
-import com.criteo.cuttle.flow.signals.{KafkaConfig, KafkaNotification, SignallingJob}
+import com.criteo.cuttle.flow.utils.JobUtils
 
 import scala.concurrent.Future
-import scala.concurrent.duration._
 
 
-object TestWorkflow extends IOApp {
+/**
+  * The goal of this test is to get to work the routing system
+  */
+
+object TestWorkflow2 extends IOApp {
 
   import com.criteo.cuttle.platforms.local._
   import io.circe.Json
   import io.circe.parser.parse
   import io.circe.syntax._
 
-  private val flowSignalTopic = new KafkaNotification[String, String](KafkaConfig(
-    topic = "signal-flow",
-    groupId = "flow-signal",
-    servers = List("localhost:9092")))
-
   def run(args: List[String]): IO[ExitCode] = {
+    // Normally job are idempotent you can have one for all
 
-   /* flowSignalTopic
-      .consume
-      .compile
-      .drain
-      .unsafeRunAsyncAndForget()*/
+    val js = jobs(7)
 
 
-    val qkJob = jobs(7)
+    val wf = dataprepJob.error(errorJob) && booJob.error(errorJob)
+    val wf2 = (wf --> js(2).error(errorJob)) && js(3).error(error2Job)
+    val wf3 = wf2 --> js(4).error(error2Job)
 
-    val wf = (((dataprepJob && fooJob) --> booJob) && (makeTrainJob --> makePredictionJob("Step-Training"))) --> (modellingJob)
+    val run = FlowProject()(wf3).start()
 
-    val run = FlowProject()(wf).start()
     val list = run.compile.toList.unsafeRunSync
     list.foreach(p => println(p))
-
     IO(ExitCode.Success)
   }
-
-  //@msg = (workflowML.workflowId, "trigger-next-stepu")
-  private def pushOnce(msg : (String, String), duration : FiniteDuration) =
-    fs2.Stream.awakeEvery[IO](duration).head *>
-    flowSignalTopic.pushOne(msg)
-
 
   private def jobs(howMuch : Int): Vector[Job[FlowScheduling]] = Vector.tabulate(howMuch)(i =>
     Job(i.toString, FlowScheduling())((_: Execution[_]) => Future.successful(Finished))
   )
+
+  private val errorJob = {
+    Job("Step-Error", FlowScheduling(), "Error") {
+      implicit e =>
+
+        e.streams.info("We got an error :'( ")
+        Future { Finished }
+    }
+  }
+
+  private val error2Job = {
+    Job("Step-Error2", FlowScheduling(), "Error") {
+      implicit e =>
+
+        e.streams.info("We got an error 2 :'( ")
+        Future { Finished }
+    }
+  }
+
+  private val error3Job = {
+    Job("Step-Error3", FlowScheduling(), "Error") {
+      implicit e =>
+
+        e.streams.info("We got an error 3 :'( ")
+        Future { Finished }
+    }
+  }
+
+  private val error4Job = {
+    Job("Step-Error4", FlowScheduling(), "Error") {
+      implicit e =>
+
+        e.streams.info("We got an error 4 :'( ")
+        Future { Finished }
+    }
+  }
+
+  private val endJob = {
+    Job("Step-End", FlowScheduling(), "Ending process") {
+      implicit e =>
+
+        e.streams.info("We got an End  :) ")
+
+        Future.successful(Finished)
+    }
+  }
 
   private val booJob = {
     Job("Step-Boo", FlowScheduling(Some("{param: \"ok\"}")), "Booing") {
@@ -75,7 +109,7 @@ object TestWorkflow extends IOApp {
     Job("Step-Foo", FlowScheduling(), "Fooing") {
       implicit e: Execution[FlowScheduling] =>
         e.streams.info("Testing Foo")
-        Future.successful(Finished)
+        Future { Finished }
     }
   }
 
@@ -87,13 +121,13 @@ object TestWorkflow extends IOApp {
     }
   }
 
-  private val makePredictionJob = (prevStep : String) => {
+  private val makePredictionJob =  {
     Job("Step-MakePredic", FlowScheduling(), "predicting") {
       implicit e =>
         e.streams.info("Testing MakePredic")
-        e.streams.writeln(e.context.resultsFromPreviousNodes.get(prevStep).toString)
+        e.streams.writeln(e.context.resultsFromPreviousNodes.get("Step-Training").toString)
         Future.successful(Finished)
-    }
+  }
   }
 
   private val makeTrainJob = {
@@ -110,7 +144,8 @@ object TestWorkflow extends IOApp {
   private val dataprepJob = {
     Job("Step-Dataprep", FlowScheduling(), "Data preparation") {
       implicit e =>
-        exec"""sh -c '
+
+        val waitShell = exec"""sh -c '
          |    echo Looping for 5 seconds...
          |    for i in `seq 1 5`
          |    do
@@ -120,6 +155,7 @@ object TestWorkflow extends IOApp {
          |    echo Ok
          |'""" ()
 
+        waitShell //.flatMap(_ => JobUtils.failedJob("Job error failed"))
     }
   }
 }

@@ -11,6 +11,7 @@ import cats.syntax.either._
 
 package object flow {
 
+  import io.circe.generic.semiauto.{deriveEncoder, deriveDecoder}
   /** Convert a single job to Workflow of a single job. */
   implicit def jobAsWorkflow(job: Job[FlowScheduling]): FlowWorkflow =
     new FlowWorkflow {
@@ -20,22 +21,25 @@ package object flow {
 
 
 
-  implicit def flowEncoder = new Encoder[FlowScheduling] {
+/*  implicit def flowEncoder = new Encoder[FlowScheduling] {
     override def apply(a: FlowScheduling): Json = a.asJson
   }
+*/
 
+  implicit val routingEdgeDecoder: Decoder[RoutingKind.Routing] = deriveDecoder
+  implicit val routingEdgeEncoder: Encoder[RoutingKind.Routing] = deriveEncoder
 
-
-  implicit def flowWFEncoder(implicit dec: Encoder[FlowJob]) =
+  implicit def workflowEncoder(implicit dec: Encoder[FlowJob]) =
     new Encoder[FlowWorkflow] {
       override def apply(workflow: FlowWorkflow) = {
-        val jobs = workflow.jobsInOrder.asJson
+        val jobs = workflow.vertices.map(_.id).toList.asJson
         val tags = workflow.vertices.flatMap(_.tags).asJson
         val dependencies = workflow.edges.map {
-          case (from, to) =>
+          case (from, to, kind) =>
             Json.obj(
               "from" -> from.id.asJson,
-              "to" -> to.id.asJson
+              "to" -> to.id.asJson,
+              "kind" -> kind.toString.asJson
             )
         }.asJson
 
@@ -47,22 +51,14 @@ package object flow {
       }
     }
 
-  implicit def flowWFDecoder(implicit dec: Decoder[JobApplicable[FlowScheduling]]) =
+  implicit def workflowDecoder(implicit dec: Decoder[JobApplicable[FlowScheduling]]) =
     new Decoder[FlowWorkflow] {
-
-      // Might move this
-      case class Edge(from : String, to : String)
-
-      // Same
-      implicit val decodeEdge : Decoder[Edge] = Decoder.forProduct2("from", "to")(Edge.apply)
-
-
       override def apply(c : HCursor): Decoder.Result[FlowWorkflow] = {
         val wf = FlowWorkflow.empty[FlowScheduling]
 
         for {
           jobs <- c.downField("jobs").as[List[JobApplicable[FlowScheduling]]]
-          dependencies <- c.downField("dependencies").as[List[Edge]]
+          dependencies <- c.downField("dependencies").as[List[(String, String, RoutingKind.Routing)]]
           tags <- c.downField("tags").as[List[Tag]]
 
         } yield wf

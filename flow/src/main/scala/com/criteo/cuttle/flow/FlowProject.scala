@@ -3,11 +3,10 @@ package com.criteo.cuttle.flow
 import java.time.Instant
 import java.util.UUID
 
-import cats.effect.{Concurrent, IO, Sync}
-import com.criteo.cuttle.flow.FlowSchedulerUtils.FlowJob
-import com.criteo.cuttle.{Completed, DatabaseConfig, ExecutionPlatform, Executor, Logger, RetryStrategy, Scheduling, platforms, Database => FlowDB}
+import cats.effect.IO
+import com.criteo.cuttle.{DatabaseConfig, ExecutionPlatform, Executor, Logger, RetryStrategy, platforms, Database => CoreDB}
+import com.criteo.cuttle.flow.{ Database => FlowDB }
 
-import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 
 /**
@@ -19,37 +18,47 @@ class FlowProject(val workflowId: String,
                   val jobs: FlowWorkflow,
                   val logger: Logger) {
 
+  import cats.implicits._
   /**
     * Start scheduling and execution with the given environment.
     *
     * @param platforms The configured [[ExecutionPlatform ExecutionPlatforms]] to use to execute jobs.
     * @param databaseConfig JDBC configuration for MySQL server 5.7. @TODO : Change db type
     * @param retryStrategy The strategy to use for execution retry. Default to exponential backoff.
-    * @param paused Automatically pause all jobs at startup.
-    * @param stateRetention If specified, automatically clean the timeseries state older than the given duration. @unused
+    * @param paused Automatically pause all jobs at startup. @unused yet
     * @param logsRetention If specified, automatically clean the execution logs older than the given duration. @unused
-    * @param maxVersionsHistory If specified keep only the version information for the x latest versions. @unused
+    *
+    * @param
     */
-  def start[F[_]: Sync](
+  def start(
              platforms: Seq[ExecutionPlatform] = FlowProject.defaultPlatforms,
              retryStrategy: Option[RetryStrategy] = None,
              paused: Boolean = false,
              databaseConfig: DatabaseConfig = DatabaseConfig.fromEnv,
-             stateRetention: Option[Duration] = None,
-             logsRetention: Option[Duration] = None,
-             maxVersionsHistory: Option[Int] = None
-           )(implicit C : Concurrent[F]): fs2.Stream[F, Set[(FlowJob, FlowSchedulerContext, Future[Completed])]] = {
+             logsRetention: Option[Duration] = None
+           ) : fs2.Stream[IO, Either[Throwable, Set[FlowSchedulerUtils.RunJob]]] = {
 
-    val xa = FlowDB.connect(databaseConfig)(logger)
+    import doobie.implicits._
+    import fs2.Stream
+
+    val xa = CoreDB.connect(databaseConfig)(logger)
     val executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, version, logsRetention)(retryStrategy)
     val scheduler = FlowScheduler(logger, workflowId)
 
-      /*if (paused) {
-        logger.info("Pausing workflow")
-        scheduler.pauseJobs(jobs.all, executor, xa)
-      }*/
-    logger.info("Start workflow")
-    scheduler.start[F](jobs, executor, xa, logger)
+    logger.info("Applying migrations to database")
+    for {
+      _      <- Stream.eval(FlowDB.doSchemaUpdates.transact(xa))
+      _       = logger.info("Database up-to-date")
+      test   <- Stream.eval(FlowDB.serializeGraph(jobs).value.transact(xa))
+      stream <- test match {
+        case Left(e) => Stream(Left(e))
+        case Right(_) => {
+          logger.info("Start workflow")
+          scheduler.startStream(jobs, executor, xa, logger)
+        }
+      }
+    } yield stream
+
   }
 
 }

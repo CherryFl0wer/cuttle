@@ -4,21 +4,18 @@ import java.time._
 import java.util.concurrent.TimeUnit
 
 import scala.concurrent.duration.{Duration => ScalaDuration}
-import scala.util._
 import doobie._
 import doobie.implicits._
 import doobie.hikari._
-import io.circe._
 import io.circe.syntax._
 import io.circe.Json
 import io.circe.parser._
 import cats.data.NonEmptyList
-import cats.effect.Resource.Allocate
 import cats.implicits._
-import cats.effect.{Async, IO, Resource}
+import cats.effect.{IO, Resource}
 import doobie.util.log
 import com.criteo.cuttle.events.{Event, JobSuccessForced}
-import com.zaxxer.hikari.HikariDataSource
+import org.postgresql.util.PGobject
 
 /** Configuration of JDBC endpoint.
   *
@@ -27,7 +24,7 @@ import com.zaxxer.hikari.HikariDataSource
   */
 case class DBLocation(host: String, port: Int)
 
-/** Configuration for the MySQL database used by Cuttle.
+/** Configuration for the Postgresql database used by Cuttle.
   *
   * @param locations sequence of JDBC endpoints
   * @param database JDBC database
@@ -39,82 +36,72 @@ case class DatabaseConfig(locations: Seq[DBLocation], database: String, username
 /** Utilities for [[DatabaseConfig]]. */
 object DatabaseConfig {
 
-  /** Creates a [[DatabaseConfig]] instance from the following environment variables:
-    *
-    *  - MYSQL_LOCATIONS (default to `localhost:3306`)
-    *  - MYSQL_DATABASE
-    *  - MYSQL_USERNAME
-    *  - MYSQL_PASSWORD
-    */
+  /** Creates a [[DatabaseConfig]] instance */
   def fromEnv: DatabaseConfig = {
     def env(variable: String, default: Option[String] = None) =
       Option(System.getenv(variable)).orElse(default).getOrElse(sys.error(s"Missing env ${'$' + variable}"))
 
-    val dbLocations = env("MYSQL_LOCATIONS", Some("localhost:3306"))
-      .split(',')
-      .flatMap(_.split(":") match {
-        case Array(host, port) => Try(DBLocation(host, port.toInt)).toOption
-        case _                 => None
-      })
-
-    DatabaseConfig(
-      if (dbLocations.nonEmpty) dbLocations else Seq(DBLocation("localhost", 3306)),
-      "cuttle_test", "root", "mysql" //env("MYSQL_DATABASE"),
-      //env("MYSQL_USERNAME"),
-      //env("MYSQL_PASSWORD")
-    )
+      DatabaseConfig(Seq(DBLocation("localhost", 54320)), "cuttle", "cherry", "adikteev") // Store in env("PG_xxx"))
   }
 }
 
 private[cuttle] object Database {
 
-  implicit val JsonMeta: Meta[Json] = Meta[String].imap(x => parse(x).fold(e => throw e, identity _))(
-    x => x.noSpaces
-  )
+
+  // From doobie doc
+  implicit val jsonMeta: Meta[Json] = Meta.Advanced.other[PGobject]("json").timap[Json](
+      a => parse(a.getValue).leftMap[Json](e => throw e).merge)(
+      a => {
+        val o = new PGobject
+        o.setType("json")
+        o.setValue(a.noSpaces)
+        o
+      }
+    )
 
   val schemaEvolutions = List(
     sql"""
       CREATE TABLE executions (
         id          CHAR(36) NOT NULL,
-        job         VARCHAR(1000) NOT NULL,
-        start_time  DATETIME NOT NULL,
-        end_time    DATETIME NOT NULL,
-        context_id  VARCHAR(1000) NOT NULL,
+        job         TEXT NOT NULL,
+        start_time  TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+        end_time    TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+        context_id  TEXT NOT NULL,
         success     BOOLEAN NOT NULL,
         waiting_seconds INT NOT NULL,
         PRIMARY KEY (id)
-      ) ENGINE = INNODB;
+      );
 
       CREATE INDEX execution_by_context_id ON executions (context_id);
       CREATE INDEX execution_by_job ON executions (job);
       CREATE INDEX execution_by_start_time ON executions (start_time);
 
       CREATE TABLE paused_jobs (
-        id          VARCHAR(1000) NOT NULL,
+        id          TEXT NOT NULL,
         PRIMARY KEY (id)
-      ) ENGINE = INNODB;
+      );
 
       CREATE TABLE executions_streams (
         id          CHAR(36) NOT NULL,
-        streams     MEDIUMTEXT
-      ) ENGINE = INNODB;
+        streams     TEXT
+      );
     """.update.run,
     sql"""
-      ALTER TABLE paused_jobs ADD COLUMN date DATETIME NOT NULL DEFAULT '1991-11-01:15:42:00'
+      ALTER TABLE paused_jobs ADD COLUMN date TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT '1991-11-01:15:42:00'
     """.update.run,
     sql"""
       ALTER TABLE executions_streams ADD PRIMARY KEY(id)
     """.update.run,
     sql"""
       CREATE TABLE events (
-        created      DATETIME NOT NULL,
+        created      TIMESTAMP WITHOUT TIME ZONE NOT NULL,
         kind         VARCHAR(100),
-        job_id       VARCHAR(1000),
+        job_id       TEXT,
         execution_id CHAR(36),
-        start_time   DATETIME,
-        end_time     DATETIME,
+        start_time   TIMESTAMP WITHOUT TIME ZONE,
+        end_time     TIMESTAMP WITHOUT TIME ZONE,
         payload      TEXT NOT NULL
-      ) ENGINE = INNODB;
+      );
 
       CREATE INDEX events_by_created ON events (created);
       CREATE INDEX events_by_job_id ON events (job_id);
@@ -131,13 +118,13 @@ private[cuttle] object Database {
     (for {
       _ <- sql"""CREATE TABLE IF NOT EXISTS locks (
           locked_by       VARCHAR(36) NOT NULL,
-          locked_at       DATETIME NOT NULL
-        ) ENGINE = INNODB
+          locked_at       TIMESTAMP WITHOUT TIME ZONE NOT NULL
+        );
       """.update.run
       locks <- sql"""
-          SELECT locked_by, locked_at FROM locks WHERE TIMESTAMPDIFF(MINUTE, locked_at, NOW()) < 5;
+          SELECT locked_by, locked_at FROM locks WHERE floor((EXTRACT(EPOCH FROM locked_at) - EXTRACT(EPOCH FROM NOW()))/60) < 5
         """.query[(String, Instant)].to[List]
-      _ <- if (locks.isEmpty || !locks.isEmpty) { // @Todo !!!!!!!!! change it
+      _ <- if (locks.isEmpty) {
         sql"""
             DELETE FROM locks;
             INSERT INTO locks VALUES (${guid}, NOW());
@@ -185,14 +172,14 @@ private[cuttle] object Database {
     import com.criteo.cuttle.ThreadPools.Implicits.doobieContextShift
 
     val locationString = dbConfig.locations.map(dbLocation => s"${dbLocation.host}:${dbLocation.port}").mkString(",")
-    val jdbcString = s"jdbc:mysql://$locationString/${dbConfig.database}" +
+    val jdbcString = s"jdbc:postgresql://$locationString/${dbConfig.database}" +
       "?serverTimezone=UTC&useSSL=false&allowMultiQueries=true&failOverReadOnly=false&rewriteBatchedStatements=true"
 
     for {
       connectThreadPool <- ThreadPools.doobieConnectThreadPoolResource
       transactThreadPool <- ThreadPools.doobieTransactThreadPoolResource
       transactor <- HikariTransactor.newHikariTransactor[IO](
-        "com.mysql.cj.jdbc.Driver",
+        "org.postgresql.Driver",
         jdbcString,
         dbConfig.username,
         dbConfig.password,
@@ -227,7 +214,6 @@ private[cuttle] object Database {
 }
 
 private[cuttle] case class Queries(logger: Logger) {
-  import Database._
 
   implicit val logHandler: log.LogHandler = DoobieLogsHandler(logger).handler
 
@@ -269,11 +255,11 @@ private[cuttle] case class Queries(logger: Logger) {
 
   private def query(sql: Fragment) =
     sql
-      .query[(String, String, Instant, Instant, Json, ExecutionStatus, Int)]
+      .query[(String, String, Instant, Instant, String, ExecutionStatus, Int)] // OC : Json now String
       .to[List]
       .map(_.map {
         case (id, job, startTime, endTime, context, status, waitingSeconds) =>
-          ExecutionLog(id, job, Some(startTime), Some(endTime), context, status, waitingSeconds = waitingSeconds)
+          ExecutionLog(id, job, Some(startTime), Some(endTime), context.asJson, status, waitingSeconds = waitingSeconds)
       })
 
   def getExecutionLog(contextQuery: Fragment,
@@ -327,11 +313,11 @@ private[cuttle] case class Queries(logger: Logger) {
       SELECT executions.id, job, start_time, end_time, contexts.json AS context, success, executions.waiting_seconds
       FROM executions INNER JOIN (""" ++ contextQuery ++ sql""") contexts
       ON executions.context_id = contexts.id WHERE executions.id = $id""")
-      .query[(String, String, Instant, Instant, Json, ExecutionStatus, Int)]
+      .query[(String, String, Instant, Instant, String, ExecutionStatus, Int)] // OC : Json now String
       .option
       .map(_.map {
         case (id, job, startTime, endTime, context, status, waitingSeconds) =>
-          ExecutionLog(id, job, Some(startTime), Some(endTime), context, status, waitingSeconds = waitingSeconds)
+          ExecutionLog(id, job, Some(startTime), Some(endTime), context.asJson, status, waitingSeconds = waitingSeconds)
       })
 
   def resumeJob(id: String): ConnectionIO[Int] =
@@ -356,13 +342,10 @@ private[cuttle] case class Queries(logger: Logger) {
       (${id}, ${streams})
     """.update.run
 
-  def applyLogsRetention(logsRetention: ScalaDuration): ConnectionIO[Int] =
+  def applyLogsRetention(logsRetention: ScalaDuration): ConnectionIO[Int] = // TODO : Need test because switched to PG format request
     sql"""
-      DELETE es
-        FROM executions_streams es
-        JOIN executions e
-          ON es.id = e.id
-       WHERE end_time < ${Instant.now.minusSeconds(logsRetention.toSeconds)}
+          DELETE FROM executions_streams AS es USING executions AS e
+          WHERE es.id = e.id AND end_time < ${Instant.now.minusSeconds(logsRetention.toSeconds)}
     """.update.run
 
   def archivedStreams(id: String): ConnectionIO[Option[String]] =
@@ -375,11 +358,11 @@ private[cuttle] case class Queries(logger: Logger) {
          select
              start_time,
              end_time,
-             TIMESTAMPDIFF(SECOND, start_time, end_time) as duration_seconds,
+             floor((EXTRACT(EPOCH FROM start_time) - EXTRACT(EPOCH FROM end_time))) as duration_seconds,
              waiting_seconds as waiting_seconds,
              success
          from executions
-         where job=$jobId and end_time > DATE_SUB(CURDATE(), INTERVAL 30 DAY) order by start_time asc, end_time asc
+         where job=$jobId and end_time > (NOW() - INTERVAL '30' DAY) order by start_time asc, end_time asc
        """
       .query[(Instant, Instant, Int, Int, ExecutionStatus)]
       .to[List]
@@ -389,7 +372,7 @@ private[cuttle] case class Queries(logger: Logger) {
       })
 
   def logEvent(e: Event): ConnectionIO[Int] = {
-    val payload = e.asJson
+    val payload = e.asJson.toString() // OC : Json now String
     val query: Update0 = e match {
       case JobSuccessForced(date, job, start, end) =>
         sql"""INSERT INTO events (created, kind, job_id, start_time, end_time, payload)
@@ -406,7 +389,7 @@ private[cuttle] case class Queries(logger: Logger) {
 
 object Queries {
   val getAllContexts: Fragment =
-    (sql"""
+    sql"""
       SELECT context_id as id, context_id as json FROM executions
-    """)
+    """
 }
