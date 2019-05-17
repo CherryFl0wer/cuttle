@@ -93,30 +93,15 @@ case class FlowScheduler(logger: Logger,
     val workflow = wf.asInstanceOf[FlowWorkflow]
 
     logger.info("Validate flow workflow before start")
+    import cats.data.EitherT
 
-    FlowSchedulerUtils.validate(workflow) match {
-      case Left(errors) =>
-        val consolidatedError = errors.mkString("\n")
-        logger.error(consolidatedError)
-        throw new IllegalArgumentException(consolidatedError)
-      case Right(_) => ()
-    }
-
-    logger.info("Flow Workflow is valid")
-    logger.info("Update state")
-
-    //TODO update
-    Database
-      .deserializeState(workflowdId)(workflow.vertices)
-      .transact(xa)
-      .unsafeRunSync
-     /* .foreach {
-        state => atomic {
-          implicit txn => _state() = state
-        }
-      }*/
-
-    workflow
+    for {
+      _ <- EitherT(IO.pure(FlowSchedulerUtils.validate(workflow).leftMap(x => new Throwable(x.mkString("\n")))))
+      _ = logger.info("Flow Workflow is valid")
+      _ = logger.info("Update state")
+      maybeState <- EitherT(Database.deserializeState(workflowdId)(workflow.vertices).transact(xa).attempt)
+      _ = if (maybeState.isDefined) refState.set(maybeState.get)
+    } yield workflow
   }
 
 
@@ -226,12 +211,16 @@ case class FlowScheduler(logger: Logger,
   def startStream(jobs: Workload[FlowScheduling],
                   executor: Executor[FlowScheduling],
                   xa: XA,
-                  logger: Logger): fs2.Stream[IO, Either[Throwable, Set[RunJob]]] = {
-    val workflow = initialize(jobs, xa, logger)
-    fs2
-      .Stream
-      .eval(runJobs(workflow, executor, xa, Set.empty)) // Init
-      .through(trampoline(firstFinished(workflow, executor, xa), jobs => jobs.isLeft || jobs.toOption.get.isEmpty))
+                  logger: Logger) = {
+
+    for {
+       workflowStream <- fs2.Stream.eval(initialize(jobs, xa, logger).value)
+       workflow <- cats.data.EitherT(IO.pure(workflowStream))
+
+       runningJobs = fs2.Stream.eval(runJobs(workflow, executor, xa, Set.empty)) // Init
+       results <- runningJobs.through(trampoline(firstFinished(workflow, executor, xa), jobs => jobs.isLeft || jobs.toOption.get.isEmpty))
+    } yield results
+
   }
 
 
