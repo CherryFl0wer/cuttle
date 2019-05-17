@@ -50,14 +50,6 @@ The way to manage external resources in cuttle is via [ExecutionPlatform](https:
 
 This is necessary because potentially thousands of concurrent executions can happen in cuttle. These executions will fight for shared resources via these execution platforms. Usually a platform will use a priority queue to prioritize access to these shared resources, and the priority is based on the [SchedulingContext](https://criteo.github.io/cuttle/api/com/criteo/cuttle/SchedulingContext.html) of each execution (_so the executions with highest priority get access to the shared resources first_). For example the [TimeSeriesContext](https://criteo.github.io/cuttle/api/com/criteo/cuttle/timeseries/TimeSeriesContext.html) defines its [Ordering](https://www.scala-lang.org/api/current/scala/math/Ordering.html) in such way that oldest partitions take priority.
 
-## Time series scheduling
-
-The built-in [TimeSeriesScheduler](https://criteo.github.io/cuttle/api/com/criteo/cuttle/timeseries/TimeSeriesScheduler.html) executes a workflow of jobs for the time partitions defined in a calendar. Each job defines how it maps to the calendar (_for example Hourly or Daily CEST_), and the scheduler ensures that at least one execution is created and successfully run for each defined (Job, Period) pair.
-
-In case of failure the time series scheduler will submit the execution again and again until the partition is successfully completed (_depending of the retry strategy you have configured the delay between retries will vary_).
-
-It is also possible to [Backfill](https://criteo.github.io/cuttle/api/com/criteo/cuttle/timeseries/Backfill.html) successfully completed past partitions, meaning that we want to recompute them anyway. The whole graph or only a part of the graph can be backfilled depending of what you need. A priority can be given to the backfill so the executions triggered by this backfill can be assigned more or less priority than the day to day workload.
-
 ## Flow scheduling 
 working...
 
