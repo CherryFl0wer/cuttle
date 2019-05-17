@@ -20,11 +20,8 @@ object TestWorkflow2 extends IOApp {
   import io.circe.syntax._
 
   def run(args: List[String]): IO[ExitCode] = {
-    // Normally job are idempotent you can have one for all
 
     val js = jobs(7)
-
-
     val wf = dataprepJob.error(errorJob) && booJob.error(errorJob)
     val wf2 = (wf --> js(2).error(errorJob)) && js(3).error(error2Job)
     val wf3 = wf2 --> js(4).error(error2Job)

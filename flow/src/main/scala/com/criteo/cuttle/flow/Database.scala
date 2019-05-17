@@ -116,7 +116,7 @@ private[flow] object Database {
     * @param jobs
     * @return a potential state
     */
-  def dbStateDecoder(json: Json)(implicit jobs: Set[FlowJob]): Option[State] = {
+  def dbStateDecoder(json: Json)(implicit jobs: Set[FlowJob]): Option[JobState] = {
     type StoredState = List[(String, JobFlowState)]
     val stored = json.as[StoredState]
     stored.right.toOption.flatMap { jobsStored =>
@@ -133,11 +133,11 @@ private[flow] object Database {
     * @param state
     * @return
     */
-  def dbStateEncoder(state: State): Json = state.toList.map {
+  def dbStateEncoder(state: JobState): Json = state.toList.map {
       case (job, flowState) =>  (job.id, flowState.asJson)
     }.asJson
 
-  def deserializeState(workflowId: String)(implicit jobs: Set[FlowJob]): ConnectionIO[Option[State]] = {
+  def deserializeState(workflowId: String)(implicit jobs: Set[FlowJob]): ConnectionIO[Option[JobState]] = {
     OptionT {
       sql"SELECT state FROM flow_state WHERE workflow_id = ${workflowId} ORDER BY date DESC LIMIT 1"
         .query[Json]
@@ -145,7 +145,7 @@ private[flow] object Database {
     }.map(json => dbStateDecoder(json).get).value
   }
 
-  def serializeState(workflowid : String, state: State, retention: Option[Duration]): ConnectionIO[Int] = {
+  def serializeState(workflowid : String, state: JobState, retention: Option[Duration]): ConnectionIO[Int] = {
 
     val now = Instant.now()
     val cleanStateBefore = retention.map { duration =>
@@ -193,8 +193,13 @@ private[flow] object Database {
     val h = workflow.hash.toString
     val serializedGraph = workflow.asJson
     for {
-      _ <- EitherT(sql"""SELECT exists(SELECT 1 FROM flow_graph WHERE id=${h})""".query[Boolean].unique.attempt)
-      _ <- EitherT(sql"""INSERT INTO flow_graph VALUES(${h}, ${serializedGraph})""".update.run.attempt)
+      exist <- EitherT(sql"""SELECT exists(SELECT 1 FROM flow_graph WHERE id=${h})""".query[Boolean].option.attempt)
+      _ <- if (exist.isEmpty || !exist.get)
+        EitherT(sql"""INSERT INTO flow_graph VALUES(${h}, ${serializedGraph})""".update.run.attempt)
+      else
+        EitherT.rightT[doobie.ConnectionIO, Throwable](())
     } yield ()
+
   }
+
 }

@@ -4,8 +4,10 @@ import java.time.Instant
 import java.util.UUID
 
 import cats.effect.IO
+import com.criteo.cuttle.flow.FlowSchedulerUtils.{FlowJob, JobState}
 import com.criteo.cuttle.{DatabaseConfig, ExecutionPlatform, Executor, Logger, RetryStrategy, platforms, Database => CoreDB}
-import com.criteo.cuttle.flow.{ Database => FlowDB }
+import com.criteo.cuttle.flow.{Database => FlowDB}
+import io.circe.Json
 
 import scala.concurrent.duration.Duration
 
@@ -43,19 +45,24 @@ class FlowProject(val workflowId: String,
 
     val xa = CoreDB.connect(databaseConfig)(logger)
     val executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, version, logsRetention)(retryStrategy)
-    val scheduler = FlowScheduler(logger, workflowId)
 
     logger.info("Applying migrations to database")
+    import cats.effect.concurrent.Ref
+
     for {
       _      <- Stream.eval(FlowDB.doSchemaUpdates.transact(xa))
       _       = logger.info("Database up-to-date")
-      test   <- Stream.eval(FlowDB.serializeGraph(jobs).value.transact(xa))
-      stream <- test match {
+
+      refState   <- Stream.eval(Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState]))
+      refResults <- Stream.eval(Ref.of[IO, Map[FlowJob, Json]](Map.empty[FlowJob, Json]))
+
+      scheduler = FlowScheduler(logger, workflowId, refState, refResults)
+      serialize <- Stream.eval(FlowDB.serializeGraph(jobs).value.transact(xa))
+      stream <- serialize match {
         case Left(e) => Stream(Left(e))
-        case Right(_) => {
+        case Right(_) =>
           logger.info("Start workflow")
           scheduler.startStream(jobs, executor, xa, logger)
-        }
       }
     } yield stream
 

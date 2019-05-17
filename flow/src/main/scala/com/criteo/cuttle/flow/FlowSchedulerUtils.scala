@@ -1,7 +1,9 @@
 package com.criteo.cuttle.flow
 
 import java.time.ZoneId
+
 import com.criteo.cuttle.{Completed, Job}
+import io.circe.Json
 
 import scala.concurrent.Future
 
@@ -10,7 +12,8 @@ object FlowSchedulerUtils {
 
   type Executable = (FlowJob, FlowSchedulerContext) // A job to be executed
   type RunJob = (FlowJob, FlowSchedulerContext, Future[Completed]) // Job, Context, Result
-  type State = Map[FlowJob, JobFlowState]
+  type JobState = Map[FlowJob, JobFlowState]
+  type JobResults = Map[FlowJob, Json]
 
   val UTC: ZoneId = ZoneId.of("UTC")
 

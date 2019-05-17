@@ -14,7 +14,7 @@ import io.circe.generic.semiauto.deriveDecoder
 case class FlowSchedulerContext(start : Instant,
                                 projectVersion: String = "",
                                 workflowId : String,
-                                resultsFromPreviousNodes : Map[String, Json] = Map.empty) extends SchedulingContext {
+                                resultsFromPreviousNodes : Option[Map[String, Json]] = None) extends SchedulingContext {
 
   import cats.free.Free
 

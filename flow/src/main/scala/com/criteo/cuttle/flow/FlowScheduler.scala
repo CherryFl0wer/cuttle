@@ -2,67 +2,63 @@ package com.criteo.cuttle.flow
 
 import java.time.Instant
 
-import cats.data.EitherT
-import cats.effect.IO
-import cats.implicits._
 import com.criteo.cuttle.ThreadPools.Implicits.sideEffectThreadPool
 import com.criteo.cuttle.ThreadPools._
 import com.criteo.cuttle._
+import com.criteo.cuttle.flow.FlowSchedulerUtils._
+
 import doobie.implicits._
 import io.circe._
 import io.circe.syntax._
 
 import scala.concurrent.Future
-import scala.concurrent.stm._
+
+import cats.effect.concurrent.{Ref => CatsRef}
+import cats.effect.IO
+import cats.implicits._
+
 import scala.collection.mutable.LinkedHashSet
 
 
 /** A [[FlowScheduler]] executes the [[com.criteo.cuttle.flow.FlowWorkflow Workflow]]
   */
-case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler[FlowScheduling] {
-
-  import FlowSchedulerUtils._
+case class FlowScheduler(logger: Logger,
+                         workflowdId : String,
+                         refState : CatsRef[IO, JobState],
+                         refResults : CatsRef[IO, JobResults]) extends Scheduler[FlowScheduling] {
 
   override val name = "flow"
-
-  private val _state = Ref(Map.empty[FlowJob, JobFlowState]) // State of a job
-
-  private[flow] def state: State = atomic { implicit txn => _state() }
-
-  private val _results = Ref(Map.empty[FlowJob, Json])
-
-  private[flow] def results: Map[FlowJob, Json] = atomic { implicit txn => _results() }
 
   private val queries = Queries(logger)
 
   private val discardedJob = new LinkedHashSet[FlowJob]()
 
-  private def currentJobsRunning(state : State) : Set[FlowJob] = atomic { implicit txn =>
+  private def currentJobsRunning(state : JobState) : Set[FlowJob] =
     state.filter { case (_, jobState) =>
       jobState match {
         case Running(_) => true
         case _ => false
       }
     }.keySet
-  }
 
-  private def currentJobsDone(state : State) : Set[FlowJob] = atomic { implicit txn =>
+
+  private def currentJobsDone(state : JobState) : Set[FlowJob] =
     state.filter { case (_, jobState) =>
       jobState match {
         case Done => true
         case _ => false
       }
     }.keySet
-  }
 
-  private def currentJobsFailed(state : State) : Set[FlowJob] = atomic { implicit txn =>
+
+  private def currentJobsFailed(state : JobState) : Set[FlowJob] =
     state.filter { case (_, jobState) =>
       jobState match {
         case Failed => true
         case _ => false
       }
     }.keySet
-  }
+
 
 
 
@@ -73,17 +69,14 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     * @param job the job to save
     * @param context the context of the job
     * @param xa doobie sql
-    *           TODO
     * */
-  private def saveResult(wfHash : Int, job : FlowJob, context : FlowSchedulerContext, xa : XA) = {
-    Database.insertResult(wfHash.toString, workflowdId, job.id,  job.scheduling.inputs.asJson, context.result)
-      .transact(xa)
-      .unsafeRunSync()
+  private def saveResult(wfHash : Int, job : FlowJob, context : FlowSchedulerContext, xa : XA) = for {
+      _ <- Database
+        .insertResult(wfHash.toString, workflowdId, job.id,  job.scheduling.inputs.asJson, context.result)
+        .transact(xa) // Attempt in case of err
+      _ <- refResults.modify(m => (m + (job -> context.result), m))
+  } yield ()
 
-    atomic { implicit txn =>
-      _results() = _results() + (job -> context.result)
-    }
-  }
 
   /***
     *
@@ -110,17 +103,18 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     }
 
     logger.info("Flow Workflow is valid")
-
     logger.info("Update state")
+
+    //TODO update
     Database
       .deserializeState(workflowdId)(workflow.vertices)
       .transact(xa)
       .unsafeRunSync
-      .foreach {
+     /* .foreach {
         state => atomic {
           implicit txn => _state() = state
         }
-      }
+      }*/
 
     workflow
   }
@@ -136,11 +130,10 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
   private[flow] def jobsToRun(workflow: FlowWorkflow,
                               executor: Executor[FlowScheduling],
-                              newState : State): Seq[Executable] = {
+                              newState : JobState): IO[Seq[Executable]] = {
 
-    // Are those which are not running
-    def jobsAllowedToRun(nextJobs : Set[FlowJob]) =
-       nextJobs
+    // Jobs to run are those which are not running
+    def jobsAllowedToRun(nextJobs : Set[FlowJob]) = nextJobs
         .diff(currentJobsRunning(newState))
         .foldLeft(Set.empty[FlowJob]) { (acc, job) =>
           if (currentJobsFailed(newState).contains(job)) { // if the jobs has failed then we give its error path for next jobs
@@ -161,17 +154,15 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     // Next jobs ? take off jobs done, discarded ones and error job
     // Error job will be added by jobsAllowedToRun
     val newWorkflow = FlowWorkflow.without(workflow, currentJobsDone(newState) ++ discardedJob.toSet ++ workflow.childFrom(RoutingKind.Failure))
-    val roots = newWorkflow.roots
-    val toRun = jobsAllowedToRun(roots).map { j =>
-      val parentOfJob = workflow.parentsOf(j) // Previous job
-      val resultsFromParent = parentOfJob.foldLeft(Map.empty[String, Json])((acc, job) => atomic {
-        implicit txn => acc + (job.id -> _results().getOrElse(job, Json.Null))
-      })
-
-      (j, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId, resultsFromParent))
+    val toRun = jobsAllowedToRun(newWorkflow.roots).map { j => for {
+        resultsMap <- refResults.get
+        parentOfJob = workflow.parentsOf(j) // Previous job
+        resultsFromParent = parentOfJob.map { job => job.id -> resultsMap.getOrElse(job, Json.Null) }.toMap
+        optResults = if (resultsFromParent.isEmpty) None else Some(resultsFromParent)
+      } yield (j, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId, optResults))
     }
 
-    toRun.toSeq
+    toRun.toList.traverse(identity)
   }
 
 
@@ -189,58 +180,36 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
 
 
     val (completed, stillRunning) = completion(running)
+    for {
+      stateMap <- refState.get
+      updatedJob <- completed.flatMap { case (job, ctx, future) =>
+        val jobExist = stateMap.get(job).isDefined
+        future.value.get match {
+          case x if x.isSuccess || jobExist && stateMap(job) == Done => Some(saveResult(workflow.hash, job, ctx, xa).map(_ => job -> Done))
+          case x if x.isFailure => Some(saveResult(workflow.hash, job, ctx, xa).map(_ => job -> Failed))
+          case _ => None
+        }
+      }.toList.traverse(identity)
 
-    // Update state and get the next jobs to run
-    val (stateSnapshot, toRun) = atomic { implicit txn =>
+      updatedMapJob = updatedJob.toMap
 
-      def isDone(state: State, job: FlowJob): Boolean = state(job) match  {
-        case Done => true
-        case _       => false
-      }
+      _ <- refState.update { st =>  st ++ updatedMapJob }
+      stateSnapshot <- refState.get
+      runningSeq <- jobsToRun(workflow, executor, stateSnapshot)
 
-      // update state with job statuses
-      val newState = completed.foldLeft(_state()) {
-        case (acc, (job, context, future)) =>
+      newExecutions = executor.runAll(runningSeq) // TODO Change core to return IO execution
+      // Add execution to state
+      execState = newExecutions.map { case (exec, _) => exec.job -> Running(exec.id) }.toMap
+      _ <- refState.update(st => st ++ execState)
 
-          if (future.value.get.isSuccess || isDone(_state(), job)) {
-            saveResult(workflow.hash, job, context, xa) // TODO : remove unsafeRunSync
-            acc + (job -> Done)
-          }
-          else if(future.value.get.isFailure) {
-            saveResult(workflow.hash, job, context, xa) // TODO : remove unsafeRunSync
-            acc + (job -> Failed)
-          }
-          else acc
-      }
+      statusJobs = stillRunning ++ newExecutions.map { case (exec, res) => (exec.job, exec.context, res) }
+      newStatus <- if(completed.nonEmpty || runningSeq.nonEmpty)
+          Database
+           .serializeState(workflowdId, stateSnapshot, None).transact(xa).map(_ => statusJobs).attempt
+        else
+          IO.pure(Either.right(statusJobs))
+    } yield newStatus
 
-      val toRun = jobsToRun(workflow, executor, newState)
-
-      _state() = newState
-
-      (newState, toRun)
-    }
-
-    val newExecutions = executor.runAll(toRun) // TODO Change core to return IO execution
-
-    atomic { implicit txn =>
-      _state() = newExecutions.foldLeft(_state()) {
-        case (st, (execution, _)) =>
-          st + (execution.job -> Running(execution.id))
-      }
-    }
-
-    val statusJobs = stillRunning ++ newExecutions.map {
-      case (execution, result) =>
-        (execution.job, execution.context, result)
-    }
-
-    if(completed.nonEmpty || toRun.nonEmpty) {
-      val serializeState = for {
-        ei <- EitherT(Database.serializeState(workflowdId, stateSnapshot, None).transact(xa).attempt)
-        res = statusJobs
-      } yield res
-      serializeState.value
-    } else IO(Either.right(statusJobs))
   }
 
 
@@ -254,13 +223,15 @@ case class FlowScheduler(logger: Logger, workflowdId : String) extends Scheduler
     * @param logger The logger to use to log internal debug state if needed.
     */
 
-  def startStream(jobs: Workload[FlowScheduling], executor: Executor[FlowScheduling], xa: XA, logger: Logger): fs2.Stream[IO, Either[Throwable, Set[RunJob]]] = {
+  def startStream(jobs: Workload[FlowScheduling],
+                  executor: Executor[FlowScheduling],
+                  xa: XA,
+                  logger: Logger): fs2.Stream[IO, Either[Throwable, Set[RunJob]]] = {
     val workflow = initialize(jobs, xa, logger)
-
     fs2
       .Stream
       .eval(runJobs(workflow, executor, xa, Set.empty)) // Init
-      .through(trampoline(firstFinished(workflow, executor, xa), o => o.isLeft || o.toOption.get.isEmpty))
+      .through(trampoline(firstFinished(workflow, executor, xa), jobs => jobs.isLeft || jobs.toOption.get.isEmpty))
   }
 
 
