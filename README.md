@@ -58,6 +58,9 @@ In case of failure the time series scheduler will submit the execution again and
 
 It is also possible to [Backfill](https://criteo.github.io/cuttle/api/com/criteo/cuttle/timeseries/Backfill.html) successfully completed past partitions, meaning that we want to recompute them anyway. The whole graph or only a part of the graph can be backfilled depending of what you need. A priority can be given to the backfill so the executions triggered by this backfill can be assigned more or less priority than the day to day workload.
 
+## Flow scheduling 
+working...
+
 # Documentation
 
 The [API documentation](https://criteo.github.io/cuttle/api/index.html) is the main reference for Scala programmers.
@@ -75,7 +78,7 @@ The library is cross-built for __Scala 2.11__ and __Scala 2.12__.
 The core module to use is `"com.criteo.cuttle" %% "cuttle" % "0.9.2"`.
 
 You also need to fetch one __Scheduler__ implementation:
-- __TimeSeries__: `"com.criteo.cuttle" %% "timeseries" % "0.9.2""`.
+- __Flow__: `"com.criteo.cuttle" %% "flow" % "0.9.2""`.
 - __Cron__: `"com.criteo.cuttle" %% "cron" % "0.9.2""`.
 
 # License
