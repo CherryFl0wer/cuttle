@@ -94,9 +94,9 @@ class FlowSignalTestsSpec extends FunSuite with TestScheduling with Matchers {
     )
 
     var x = 0
-    res.map(_.right.get).foreach { runnedJobs =>
+    res.foreach { runnedJobs =>
       runnedJobs should be ('right)
-      runnedJobs.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
+      runnedJobs.right.get.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
       x += 1
     }
   }
@@ -144,9 +144,9 @@ class FlowSignalTestsSpec extends FunSuite with TestScheduling with Matchers {
     )
 
     var x = 0
-    res.map(_.right.get).foreach { runnedJobs =>
+    res.foreach { runnedJobs =>
       runnedJobs should be ('right)
-      runnedJobs.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
+      runnedJobs.right.get.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
       x += 1
     }
   }
@@ -196,9 +196,9 @@ class FlowSignalTestsSpec extends FunSuite with TestScheduling with Matchers {
     )
 
     var x = 0
-    res.map(_.right.get).foreach { runnedJobs =>
+    res.foreach { runnedJobs =>
       runnedJobs should be ('right)
-      runnedJobs.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
+      runnedJobs.right.get.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
       x += 1
     }
   }

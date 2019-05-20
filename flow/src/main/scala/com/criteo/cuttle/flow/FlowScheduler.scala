@@ -89,19 +89,17 @@ case class FlowScheduler(logger: Logger,
 
 
 
-  private[flow] def initialize(wf : Workload[FlowScheduling], xa : XA, logger : Logger) = {
-    val workflow = wf.asInstanceOf[FlowWorkflow]
+  private[flow] def initialize(workflow : FlowWorkflow, xa : XA, logger : Logger) = {
 
     logger.info("Validate flow workflow before start")
     import cats.data.EitherT
-
     for {
       _ <- EitherT(IO.pure(FlowSchedulerUtils.validate(workflow).leftMap(x => new Throwable(x.mkString("\n")))))
       _ = logger.info("Flow Workflow is valid")
       _ = logger.info("Update state")
       maybeState <- EitherT(Database.deserializeState(workflowdId)(workflow.vertices).transact(xa).attempt)
       _ = if (maybeState.isDefined) refState.set(maybeState.get)
-    } yield workflow
+    } yield ()
   }
 
 
@@ -213,14 +211,13 @@ case class FlowScheduler(logger: Logger,
                   xa: XA,
                   logger: Logger) = {
 
+    val workflow = jobs.asInstanceOf[FlowWorkflow]
     for {
-       workflowStream <- fs2.Stream.eval(initialize(jobs, xa, logger).value)
-       workflow <- cats.data.EitherT(IO.pure(workflowStream))
-
+       _ <- fs2.Stream.eval(initialize(workflow, xa, logger).value)
        runningJobs = fs2.Stream.eval(runJobs(workflow, executor, xa, Set.empty)) // Init
-       results <- runningJobs.through(trampoline(firstFinished(workflow, executor, xa), jobs => jobs.isLeft || jobs.toOption.get.isEmpty))
+       results <- runningJobs.through(trampoline(firstFinished(workflow, executor, xa),
+         (jobs : Either[Throwable, Set[RunJob]]) => jobs.isLeft || jobs.toOption.get.isEmpty))
     } yield results
-
   }
 
 
