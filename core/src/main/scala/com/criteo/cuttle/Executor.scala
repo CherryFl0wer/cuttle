@@ -721,6 +721,18 @@ class Executor[S <: Scheduling] private[cuttle] (
       runningState += (execution -> promise.future)
     }
 
+  private[cuttle] def updateFinishedExecutionCounters(execution: Execution[S], status: String): Unit =
+    atomic { implicit txn =>
+      val tagsLabel =
+        if (execution.job.tags.nonEmpty)
+          Set("tags" -> execution.job.tags.map(_.name).mkString(","))
+        else
+          Set.empty
+      executionsCounters() = executionsCounters().inc(
+        Set("type" -> status, "job_id" -> execution.job.id) ++ tagsLabel
+      )
+    }
+
   private def unsafeDoRun(execution: Execution[S], promise: Promise[Completed]): Unit =
     promise.completeWith(
       (Try(execution.run()) match { // Running side effect
@@ -779,17 +791,6 @@ class Executor[S <: Scheduling] private[cuttle] (
             }
         })
 
-  private[cuttle] def updateFinishedExecutionCounters(execution: Execution[S], status: String): Unit =
-    atomic { implicit txn =>
-      val tagsLabel =
-        if (execution.job.tags.nonEmpty)
-          Set("tags" -> execution.job.tags.map(_.name).mkString(","))
-        else
-          Set.empty
-      executionsCounters() = executionsCounters().inc(
-        Set("type" -> status, "job_id" -> execution.job.id) ++ tagsLabel
-      )
-    }
 
 
   private def run0(all: Seq[(Job[S], S#Context)]): Seq[(Execution[S], Future[Completed])] = {

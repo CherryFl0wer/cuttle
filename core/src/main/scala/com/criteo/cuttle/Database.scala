@@ -39,9 +39,15 @@ object DatabaseConfig {
   /** Creates a [[DatabaseConfig]] instance */
   def fromEnv: DatabaseConfig = {
     def env(variable: String, default: Option[String] = None) =
-      Option(System.getenv(variable)).orElse(default).getOrElse(sys.error(s"Missing env ${'$' + variable}"))
+      Option(System.getenv(variable)).orElse(default).getOrElse(s"Missing env ${'$' + variable}")
 
-      DatabaseConfig(Seq(DBLocation("localhost", 54320)), "cuttle", "cherry", "adikteev") // Store in env("PG_xxx"))
+    val host = env("DB_HOST", Some("localhost"))
+    val port = env("DB_PORT", Some("5532"))
+    val dbname = env("DB_NAME", Some("audience"))
+    val user = env("DB_USER", Some("audience"))
+    val pwd  = env("DB_PASSWORD", Some("password"))
+    //TODO
+    DatabaseConfig(Seq(DBLocation(host, port.toInt)), dbname, user, pwd)
   }
 }
 

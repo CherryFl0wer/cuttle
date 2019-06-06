@@ -1,7 +1,7 @@
 package com.criteo.cuttle.flow
 
 import cats.effect.{ContextShift, IO, Timer}
-import com.criteo.cuttle.{Execution, Finished, Job, TestScheduling}
+import com.criteo.cuttle.{Execution, Finished, Job, ITTestScheduling}
 
 import scala.concurrent.duration._
 import org.scalatest._
@@ -20,7 +20,7 @@ import scala.concurrent.duration.FiniteDuration
   *
   * @Todo specific database for the tests
   * */
-class FlowTestsSpec extends FunSuite with TestScheduling with Matchers {
+class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
 
   implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)

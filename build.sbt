@@ -1,7 +1,7 @@
 val devMode = settingKey[Boolean]("Some build optimization are applied in devMode.")
 val writeClasspath = taskKey[File]("Write the project classpath to a file.")
 
-val VERSION = "0.9.2"
+val VERSION = "0.9.3-SNAPSHOT"
 
 lazy val catsCore = "1.6.0"
 lazy val circe = "0.10.1"
@@ -13,7 +13,7 @@ addCompilerPlugin("org.scalamacros" % "paradise" % "2.1.0" cross CrossVersion.fu
 lazy val commonSettings = Seq(
   organization := "com.criteo.cuttle",
   version := VERSION,
-  scalaVersion := "2.11.11",
+  scalaVersion := "2.12.8",
   crossScalaVersions := Seq("2.11.11", "2.12.3"),
   scalacOptions ++= Seq(
     "-deprecation",
@@ -29,10 +29,7 @@ lazy val commonSettings = Seq(
     "-Ywarn-unused-import",
     "-Ypartial-unification",
     "-Xmacro-settings:materialize-derivations"
-  ) ++ (CrossVersion.partialVersion(scalaVersion.value) match {
-    case Some((2, 12)) => Seq("-Ywarn-unused:-params")
-    case _             => Nil
-  }),
+  ),
   devMode := Option(System.getProperty("devMode")).isDefined,
   writeClasspath := {
     val f = file(s"/tmp/classpath_${organization.value}.${name.value}")
@@ -56,9 +53,6 @@ lazy val commonSettings = Seq(
     else
       Opts.resolver.sonatypeStaging
   ),
-  pgpPassphrase := sys.env.get("SONATYPE_PASSWORD").map(_.toArray),
-  pgpSecretRing := file(".travis/secring.gpg"),
-  pgpPublicRing := file(".travis/pubring.gpg"),
   // Useful to run flakey tests
   commands += Command.single("repeat") { (state, arg) =>
     arg :: s"repeat $arg" :: state
@@ -155,7 +149,7 @@ lazy val examples =
 
 lazy val root =
   (project in file("."))
-    .enablePlugins(ScalaUnidocPlugin)
+    .enablePlugins(ScalaUnidocPlugin) 
     .settings(commonSettings: _*)
     .settings(
       scalacOptions in (ScalaUnidoc, unidoc) ++= Seq(
@@ -191,4 +185,4 @@ lazy val root =
       },
       unidocProjectFilter in (ScalaUnidoc, unidoc) := inProjects(cuttle, flow)
     )
-    .aggregate(cuttle)
+    .aggregate(cuttle, flow)

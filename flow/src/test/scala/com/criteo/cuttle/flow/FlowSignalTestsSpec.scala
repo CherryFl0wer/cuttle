@@ -3,7 +3,7 @@ package com.criteo.cuttle.flow
 import cats.effect.{ContextShift, IO, Timer}
 import com.criteo.cuttle.Utils.logger
 import com.criteo.cuttle.flow.signals.{KafkaConfig, KafkaNotification, SignallingJob}
-import com.criteo.cuttle.{Execution, Finished, Job, TestScheduling}
+import com.criteo.cuttle.{Execution, Finished, Job, ITTestScheduling}
 import org.scalatest.Matchers
 import org.scalatest.FunSuite
 
@@ -18,7 +18,7 @@ import scala.concurrent.duration._
   *           they are here to assure that execution is conform at what we expect
   *
   * */
-class FlowSignalTestsSpec extends FunSuite with TestScheduling with Matchers {
+class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
   implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
   implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)

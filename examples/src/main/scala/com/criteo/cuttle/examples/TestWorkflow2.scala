@@ -3,7 +3,6 @@ package com.criteo.cuttle.examples
 import cats.effect._
 import com.criteo.cuttle._
 import com.criteo.cuttle.flow._
-import com.criteo.cuttle.flow.utils.JobUtils
 
 import scala.concurrent.Future
 
