@@ -51,7 +51,13 @@ The way to manage external resources in cuttle is via [ExecutionPlatform](https:
 This is necessary because potentially thousands of concurrent executions can happen in cuttle. These executions will fight for shared resources via these execution platforms. Usually a platform will use a priority queue to prioritize access to these shared resources, and the priority is based on the [SchedulingContext](https://criteo.github.io/cuttle/api/com/criteo/cuttle/SchedulingContext.html) of each execution (_so the executions with highest priority get access to the shared resources first_). For example the [TimeSeriesContext](https://criteo.github.io/cuttle/api/com/criteo/cuttle/timeseries/TimeSeriesContext.html) defines its [Ordering](https://www.scala-lang.org/api/current/scala/math/Ordering.html) in such way that oldest partitions take priority.
 
 ## Flow scheduling 
-working...
+Run a workflow 
+
+TODO: 
+
+    * Start a specific job from the graph 
+    * Update Kafka Notifier with payload message
+    * Trigger kafka but directly into a running job
 
 # Documentation
 

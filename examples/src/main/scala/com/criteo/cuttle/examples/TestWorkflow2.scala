@@ -21,9 +21,11 @@ object TestWorkflow2 extends IOApp {
   def run(args: List[String]): IO[ExitCode] = {
 
     val js = jobs(7)
-    val wf = dataprepJob.error(errorJob) && booJob.error(errorJob)
-    val wf2 = (wf --> js(2).error(errorJob)) && js(3).error(error2Job)
-    val wf3 = wf2 --> js(4).error(error2Job)
+    /*val wf = dataprepJob.error(errorJob) && booJob.error(errorJob)
+    val wf2 = (wf --> js(2).error(errorJob) && js(3).error(error2Job)
+    val wf3 = wf2 --> js(4).error(error2Job) */
+
+    val m =
 
     val run = FlowProject()(wf3).start()
 
@@ -76,8 +78,26 @@ object TestWorkflow2 extends IOApp {
     Job("Step-End", FlowScheduling(), "Ending process") {
       implicit e =>
 
-        e.streams.info("We got an End  :) ")
+        e.streams.info("We got to an End  :) ")
 
+        Future.successful(Finished)
+    }
+  }
+
+  private val fooJob = {
+
+    Job[FlowScheduling]("Step-Foo", FlowScheduling(), "Fooing") {
+      implicit e: Execution[FlowScheduling] =>
+        e.streams.info("Testing Foo")
+
+        Future { Finished }
+    }
+  }
+
+  private val modellingJob = {
+    Job("Step-Modelling", FlowScheduling(), "modeling") {
+      implicit e =>
+        e.streams.info("Testing Modelling")
         Future.successful(Finished)
     }
   }
@@ -101,18 +121,13 @@ object TestWorkflow2 extends IOApp {
     }
   }
 
-  private val fooJob = {
-    Job("Step-Foo", FlowScheduling(), "Fooing") {
-      implicit e: Execution[FlowScheduling] =>
-        e.streams.info("Testing Foo")
-        Future { Finished }
-    }
-  }
-
-  private val modellingJob = {
-    Job("Step-Modelling", FlowScheduling(), "modeling") {
+  private val makeTrainJob = {
+    Job("Step-Training", FlowScheduling(), "train") {
       implicit e =>
-        e.streams.info("Testing Modelling")
+        e.streams.info("Testing Training")
+        e.context.result = Json.obj(
+          "mode" -> "job training".asJson
+        )
         Future.successful(Finished)
     }
   }
@@ -123,19 +138,10 @@ object TestWorkflow2 extends IOApp {
         e.streams.info("Testing MakePredic")
         e.streams.writeln(e.context.resultsFromPreviousNodes.get("Step-Training").toString)
         Future.successful(Finished)
-  }
-  }
-
-  private val makeTrainJob = {
-    Job("Step-Training", FlowScheduling(), "train") {
-      implicit e =>
-        e.streams.info("Testing Training")
-        e.context.result = Json.obj(
-          "name" -> "job training".asJson
-        )
-        Future.successful(Finished)
     }
   }
+
+
 
   private val dataprepJob = {
     Job("Step-Dataprep", FlowScheduling(), "Data preparation") {

@@ -1,22 +1,28 @@
 package com.criteo.cuttle.flow.signals
 
-import cats.effect.{Async, Concurrent, ContextShift, IO}
+import cats.effect.{Concurrent, ContextShift, IO}
 import com.criteo.cuttle.flow.FlowScheduling
 
-import scala.concurrent.Promise
+import scala.concurrent.{Future, Promise}
 import scala.util.{Failure, Success}
 
 object SignallingJob {
   import com.criteo.cuttle._
 
   /**
-    * @todo Routing: success or error
-    * @todo Decide which job will be executed next
+    * Method `kafka` is waiting (async) for `event` to come
+    * once it is received will execute next job
+    *
+    * @param jobId job id
+    * @param event event name
+    * @param kafkaService Kafka notification class to manipulate a stream of notification
+    * @param F Concurrent operation
+    * @param cs Context shit IO
+    * @return
     * @todo What to do when not consuming msg ?
-    * @todo Failure test
     */
   def kafka(jobId : String, event : String, kafkaService : KafkaNotification[String, String])
-                      (implicit F : Concurrent[IO], cs : ContextShift[IO]): Job[FlowScheduling] = {
+           (implicit F : Concurrent[IO], cs : ContextShift[IO]): Job[FlowScheduling] = {
 
     Job(jobId, FlowScheduling(), s"waiting for event ${event}", SignalJob(event)) { implicit e =>
 
@@ -30,15 +36,75 @@ object SignallingJob {
         .compile
         .last
         .unsafeToFuture()
-        .onComplete { cb => cb match {
+        .onComplete {
+          cb => cb match {
             case Failure(err) => p.failure(new Exception(s"Job ${e.job.id} failed to complete correcty because ${err.getMessage}"))
-            case Success(value) =>  {
-              p.success(())
-            }
+            case Success(value) => p.success(())
           }
         }
 
       p.future.map(_ => Finished)
+    }
+  }
+
+
+  /**
+    * KafkaSE (Kafka Side Effect) will execute `effect` and asynchronously
+    * wait to receive a notification. If the job finish first then it won't wait for the message
+    * On the other hand if it receives a notification first will stop the execution
+    *
+    * @todo change it, because if the execution is writing on a disk you can't stop the exec like this
+    *
+    * @param jobId job id
+    * @param event event name
+    * @param kafkaService Kafka notification class to manipulate a stream of notification
+    * @param effect Side effect method that consume a job execution and return completed once done
+    *               This code is executed inside a Future
+    * @param F Concurrent operation
+    * @param cs Context shit IO
+    * @return Job
+    */
+
+  def kafkaSE(jobId : String, event : String, kafkaService : KafkaNotification[String, String])
+             (effect : Execution[FlowScheduling] => Completed)
+             (implicit F : Concurrent[IO], cs : ContextShift[IO]): Job[FlowScheduling] = {
+
+    Job(jobId, FlowScheduling(), s"waiting for event ${event}", SignalJob(event)) { implicit e =>
+
+      val kafkaPromise = Promise[Unit]()
+      val sideEffectPromise = Promise[Unit]()
+
+      e.streams.info(s"Waiting for event ${event} to be triggered in ${e.context.workflowId} by ${e.job.id}")
+
+      val sideEffectFuture = Future { effect(e) }
+
+      val kafkaFuture = kafkaService
+        .subscribeOn(record => record.key == e.context.workflowId && record.value == event)
+        .evalTap(msg => msg.committableOffset.commit)
+        .head
+        .compile
+        .last
+        .unsafeToFuture()
+
+      sideEffectFuture.onComplete {
+        cb => cb match {
+          case Failure(err) => sideEffectPromise.failure(
+            new Exception(s"Job ${e.job.id} failed to execute side effect function, reason is : ${err.getMessage}")
+          )
+          case Success(value) => sideEffectPromise.success(())
+        }
+      }
+
+      kafkaFuture.onComplete {
+          cb => cb match {
+            case Failure(err) => kafkaPromise.failure(new Exception(s"Job ${e.job.id} failed to complete correctly because ${err.getMessage}"))
+            case Success(value) => kafkaPromise.success(())
+          }
+      }
+
+      Future
+        .firstCompletedOf(List(kafkaPromise.future, sideEffectPromise.future))
+        .map(_ => Finished)
     }
   }
 }

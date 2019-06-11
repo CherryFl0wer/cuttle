@@ -137,12 +137,12 @@ case class FlowScheduler(logger: Logger,
     // Next jobs ? take off jobs done, discarded ones and error job
     // Error job will be added by jobsAllowedToRun
     val newWorkflow = FlowWorkflow.without(workflow, currentJobsDone(newState) ++ discardedJob.toSet ++ workflow.childFrom(RoutingKind.Failure))
-    val toRun = jobsAllowedToRun(newWorkflow.roots).map { j => for {
+    val toRun = jobsAllowedToRun(newWorkflow.roots).map { currentJob => for {
         resultsMap <- refResults.get
-        parentOfJob = workflow.parentsOf(j) // Previous job
+        parentOfJob = workflow.parentsOf(currentJob) // Previous job
         resultsFromParent = parentOfJob.map { job => job.id -> resultsMap.getOrElse(job, Json.Null) }.toMap
         optResults = if (resultsFromParent.isEmpty) None else Some(resultsFromParent)
-      } yield (j, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId, optResults))
+      } yield (currentJob, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId, optResults))
     }
 
     toRun.toList.traverse(identity)

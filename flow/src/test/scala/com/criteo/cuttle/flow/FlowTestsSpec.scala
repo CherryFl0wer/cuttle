@@ -243,5 +243,8 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     browse.last shouldBe Right(Set.empty)
   }
 
+  test("it should execute node 1 and pass data to node 2") {
+  }
+
   //TODO Add a test fail on a success only workflow
 }
