@@ -8,7 +8,7 @@ import io.circe.Json
 import scala.concurrent.Future
 
 object FlowSchedulerUtils {
-  type FlowJob = Job[FlowScheduling]
+  type FlowJob = Job[FlowScheduling[FlowArg, FlowArg]]
 
   type Executable = (FlowJob, FlowSchedulerContext) // A job to be executed
   type RunJob = (FlowJob, FlowSchedulerContext, Future[Completed]) // Job, Context, Result

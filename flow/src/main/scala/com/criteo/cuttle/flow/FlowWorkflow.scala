@@ -1,6 +1,6 @@
 package com.criteo.cuttle.flow
 
-import com.criteo.cuttle.{Scheduling, Workload}
+import com.criteo.cuttle.{Job, Scheduling, Workload}
 import com.criteo.cuttle.flow.FlowSchedulerUtils._
 import io.circe._
 
@@ -17,11 +17,12 @@ object RoutingKind {
   val choices = Seq(Success, Failure)
 }
 
-trait FlowWorkflow extends Workload[FlowScheduling] {
+
+trait FlowWorkflow extends Workload[FlowScheduling[FlowArg, FlowArg]] {
 
   type Dependency = (FlowJob, FlowJob, RoutingKind.Routing)
 
-  private[criteo] def vertices: Set[FlowJob]
+  private[criteo] def vertices : Set[FlowJob]
   private[criteo] def edges: Set[Dependency]
 
   private[cuttle] def roots: Set[FlowJob] = {
@@ -82,7 +83,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
   /**
     *  Return an hash based on the edges of the workflow using MurmurHash3 from std lib
     */
-    lazy val hash =  Math.abs(scala.util.hashing.MurmurHash3.arrayHash(edges.toArray))
+  lazy val hash =  Math.abs(scala.util.hashing.MurmurHash3.arrayHash(edges.toArray))
 
   /**
     * Compose a [[FlowWorkflow]] with another [[FlowWorkflow]] but without any
@@ -138,6 +139,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     if (fail.roots.isEmpty) leftWorkflow
 
     val job = fail.roots.head // supposed to have only one error
+
     val newJob = job.copy(id = job.id + s"-from-${leftWorkflow.leaves.map(_.id).mkString("-")}")(job.effect) // To avoid breaking at execution when error have the same id
 
     val newEdgesFail: Set[Dependency] = for {
@@ -150,12 +152,13 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     }
   }
 
+  def cancel(job : FlowWorkflow) = ???
 
   // Inheriting from trait
 
   def all = vertices
 
-  override def asJson(implicit se : Encoder[FlowJob]) = workflowEncoder(se)(this)
+  //override def asJson(implicit se : Encoder[FlowJob]) = workflowEncoder(se)(this)
 }
 
 /** Utilities for [[FlowWorkflow]]. */
@@ -165,7 +168,6 @@ object FlowWorkflow {
   /** An empty [[FlowWorkflow]] (empty graph). */
   def empty[S <: Scheduling]: FlowWorkflow = new FlowWorkflow {
     def vertices = Set.empty
-
     def edges = Set.empty
   }
 

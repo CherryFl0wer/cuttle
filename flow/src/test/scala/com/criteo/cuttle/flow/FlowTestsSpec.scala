@@ -26,13 +26,13 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
   implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
   implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
-  val job: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job(s"job-${i.toString}", FlowScheduling())(completed))
+  val job: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job[FlowScheduling](s"job-${i.toString}")(completed))
 
 
   val failedSideEffect: (Execution[_]) => Future[Nothing] = (_ : Execution[_]) => Future.failed(new Exception("Failed task"))
-  val failedJob: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job(s"failed-${i.toString}", FlowScheduling())(failedSideEffect))
+  val failedJob: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job[FlowScheduling](s"failed-${i.toString}")(failedSideEffect))
 
-  def waitingJob(id: String = "0", time : FiniteDuration) : Job[FlowScheduling] = Job(s"job-waiting-${id}", FlowScheduling()) { implicit e =>
+  def waitingJob(id: String = "0", time : FiniteDuration) : Job[FlowScheduling] = Job[FlowScheduling](s"job-waiting-${id}") { implicit e =>
     e.park(time).map(_ => Finished)(ExecutionContext.global)
   }
 
@@ -122,7 +122,7 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
   test("it should validate workflow without cycles (one parent with many children)") {
     val job1: Vector[Job[FlowScheduling]] =
-      Vector.tabulate(10)(i => Job(s"job-${i}", FlowScheduling())(completed))
+      Vector.tabulate(10)(i => Job[FlowScheduling](s"job-${i}")(completed))
     val workflow = (0 to 8).map(i => job1(9) --> job1(i)).reduce(_ && _)
 
     assert(FlowSchedulerUtils.validate(workflow).isRight, "workflow is not valid")
@@ -241,9 +241,6 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     }
 
     browse.last shouldBe Right(Set.empty)
-  }
-
-  test("it should execute node 1 and pass data to node 2") {
   }
 
   //TODO Add a test fail on a success only workflow

@@ -44,7 +44,7 @@ class FlowProject(val workflowId: String,
     import fs2.Stream
 
     val xa = CoreDB.connect(databaseConfig)(logger)
-    val executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, version, logsRetention)(retryStrategy)
+    val executor = new Executor[FlowScheduling[FlowArg, FlowArg]](platforms, xa, logger, workflowId, version, logsRetention)(retryStrategy)
 
     logger.info("Applying migrations to database")
     import cats.effect.concurrent.Ref

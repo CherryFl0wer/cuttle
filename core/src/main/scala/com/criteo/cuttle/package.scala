@@ -61,7 +61,7 @@ package object cuttle {
     *
     * A failed future means a failed execution.
     */
-  type SideEffect[S <: Scheduling] = (Execution[S]) => Future[Completed]
+  type SideEffect[S <: Scheduling] = Execution[S] => Future[Completed]
 
   /**
     * Automatically provide a scala `scala.concurrent.ExecutionContext` for a given [[Execution]].
@@ -79,28 +79,27 @@ package object cuttle {
   type JobApplicable[S <: Scheduling] = SideEffect[S] => Job[S]
 
   implicit val decodeTag : Decoder[Tag] = Decoder.forProduct2("name", "description")(Tag.apply)
-
   implicit val encodeTag : Encoder[Tag] = Encoder.forProduct2("name", "description")(t => (t.name, t.description))
+
   implicit val decodeJobKind : Decoder[JobKind] = io.circe.generic.semiauto.deriveDecoder[JobKind]
   implicit val encodeJobKind : Encoder[JobKind] = io.circe.generic.semiauto.deriveEncoder[JobKind]
 
-
-  implicit def jobDecoder[S <: Scheduling : Decoder] = new Decoder[JobApplicable[S]] {
-    override def apply(cursor : HCursor) : Result[JobApplicable[S]] = for {
+  implicit def jobDecoder[S <: Scheduling : Decoder] =
+    new Decoder[JobApplicable[S]] {
+      override def apply(cursor : HCursor) : Result[JobApplicable[S]] = for {
         id   <- cursor.downField("id").as[String]
         kind <- cursor.downField("kind").as[JobKind]
         description <- cursor.downField("description").as[String]
         tags <- cursor.downField("tags").as[Set[String]]
         scheduling <- cursor.downField("scheduling").as[S]
-      } yield Job[S](id, scheduling, description, kind, tags.map(t => Tag(t))) _
+      } yield Job[S](id, description, scheduling, kind, tags.map(t => Tag(t))) _
 
   }
 
-  implicit def jobEncoder[S <: Scheduling : Encoder] = new Encoder[Job[S]] {
-    override def apply(job: Job[S]) : Json = {
-
-      Json
-        .obj(
+  implicit def jobEncoder[S <: Scheduling : Encoder] =
+    new Encoder[Job[S]] {
+      override def apply(job: Job[S]) : Json = {
+        Json.obj(
           "id" -> job.id.asJson,
           "kind" -> job.kind.asJson,
           "description" -> Option(job.description).filterNot(_.isEmpty).getOrElse("No description").asJson,

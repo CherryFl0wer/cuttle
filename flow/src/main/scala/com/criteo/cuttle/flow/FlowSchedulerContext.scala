@@ -16,8 +16,6 @@ case class FlowSchedulerContext(start : Instant,
                                 workflowId : String,
                                 resultsFromPreviousNodes : Option[Map[String, Json]] = None) extends SchedulingContext {
 
-  import cats.free.Free
-
   // Is the result of the job
   var result : Json = Json.Null
 

@@ -23,10 +23,10 @@ lazy val commonSettings = Seq(
     "-unchecked",
     "-Xlint",
     "-Yno-adapted-args",
-    "-Ywarn-dead-code",
+    //"-Ywarn-dead-code",
     "-Xfuture",
-    "-Ywarn-unused",
-    "-Ywarn-unused-import",
+    //"-Ywarn-unused",
+    //"-Ywarn-unused-import",
     "-Ypartial-unification",
     "-Xmacro-settings:materialize-derivations"
   ),
@@ -149,7 +149,7 @@ lazy val examples =
 
 lazy val root =
   (project in file("."))
-    .enablePlugins(ScalaUnidocPlugin) 
+    .enablePlugins(ScalaUnidocPlugin)
     .settings(commonSettings: _*)
     .settings(
       scalacOptions in (ScalaUnidoc, unidoc) ++= Seq(

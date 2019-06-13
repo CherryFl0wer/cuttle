@@ -25,7 +25,7 @@ import scala.collection.mutable.LinkedHashSet
 case class FlowScheduler(logger: Logger,
                          workflowdId : String,
                          refState : CatsRef[IO, JobState],
-                         refResults : CatsRef[IO, JobResults]) extends Scheduler[FlowScheduling] {
+                         refResults : CatsRef[IO, JobResults]) extends Scheduler[FlowScheduling[FlowArg, FlowArg]] {
 
   override val name = "flow"
 
@@ -72,7 +72,7 @@ case class FlowScheduler(logger: Logger,
     * */
   private def saveResult(wfHash : Int, job : FlowJob, context : FlowSchedulerContext, xa : XA) = for {
       _ <- Database
-        .insertResult(wfHash.toString, workflowdId, job.id,  job.scheduling.inputs.asJson, context.result)
+        .insertResult(wfHash.toString, workflowdId, job.id,  job.scheduling.input.asJson, context.result) //TODO: No encoder FlowArg
         .transact(xa) // Attempt in case of err
       _ <- refResults.modify(m => (m + (job -> context.result), m))
   } yield ()
@@ -112,7 +112,7 @@ case class FlowScheduler(logger: Logger,
     */
 
   private[flow] def jobsToRun(workflow: FlowWorkflow,
-                              executor: Executor[FlowScheduling],
+                              executor: Executor[FlowScheduling[FlowArg, FlowArg]],
                               newState : JobState): IO[Seq[Executable]] = {
 
     // Jobs to run are those which are not running
@@ -158,7 +158,7 @@ case class FlowScheduler(logger: Logger,
     * @summary Run the jobs and update state of the scheduler
     * */
   private[flow] def runJobs(workflow: FlowWorkflow,
-                            executor: Executor[FlowScheduling],
+                            executor: Executor[FlowScheduling[FlowArg, FlowArg]],
                             xa : XA, running : Set[RunJob]) : IO[Either[Throwable, Set[RunJob]]] = {
 
 
@@ -206,8 +206,8 @@ case class FlowScheduler(logger: Logger,
     * @param logger The logger to use to log internal debug state if needed.
     */
 
-  def startStream(jobs: Workload[FlowScheduling],
-                  executor: Executor[FlowScheduling],
+  def startStream(jobs: Workload[FlowScheduling[FlowArg, FlowArg]],
+                  executor: Executor[FlowScheduling[FlowArg, FlowArg]],
                   xa: XA,
                   logger: Logger) = {
 
@@ -221,7 +221,7 @@ case class FlowScheduler(logger: Logger,
   }
 
 
-  private def firstFinished(workflow : FlowWorkflow, executor: Executor[FlowScheduling], xa: XA)
+  private def firstFinished(workflow : FlowWorkflow, executor: Executor[FlowScheduling[FlowArg, FlowArg]], xa: XA)
                             (possiblyRunning : Either[Throwable, Set[RunJob]]) : IO[Either[Throwable, Set[RunJob]]] =
     possiblyRunning match {
       case Right(running) =>

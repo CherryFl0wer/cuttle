@@ -23,15 +23,15 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
   implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
   implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
-  val job: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job(s"job-${i.toString}", FlowScheduling())(completed))
+  val job: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job[FlowScheduling](s"job-${i.toString}")(completed))
 
-  def waitingJob(time : FiniteDuration) : Job[FlowScheduling] = Job("job-waiting", FlowScheduling()) { implicit e =>
+  def waitingJob(time : FiniteDuration) : Job[FlowScheduling] = Job[FlowScheduling]("job-waiting") { implicit e =>
     e.park(time).map(_ => Finished)(ExecutionContext.global)
   }
 
 
   val failedSideEffect: (Execution[_]) => Future[Nothing] = (_ : Execution[_]) => Future.failed(new Exception("Failed task")) // Move to TestScheduling
-  val failedJob: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job(s"failed-${i.toString}", FlowScheduling())(failedSideEffect))
+  val failedJob: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job[FlowScheduling](s"failed-${i.toString}")(failedSideEffect))
 
   test("Signal sync") {
     val flowTestSignalTopic = new KafkaNotification[String, String](KafkaConfig(

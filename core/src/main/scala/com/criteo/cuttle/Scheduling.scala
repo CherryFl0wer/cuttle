@@ -49,8 +49,8 @@ trait Scheduler[S <: Scheduling] extends MetricProvider[S] {
 }
 
 /** A scheduling context is the input given to each [[Execution]] that will be created
-  * for a given [[Scheduling]]. For example, for a [[com.criteo.cuttle.timeseries.TimeSeries TimeSeries]] scheduling the context
-  * contain the time partition for which the job is running. */
+  * for a given [[Scheduling]]. For example, for a [[com.criteo.cuttle.flow.FlowWorkflow FlowWorkflow]] scheduling the context
+  * contain the inputs and outputs of the job running. */
 trait SchedulingContext {
 
   /** Serialize the context information to JSON. */
@@ -74,8 +74,7 @@ object SchedulingContext {
     })
 }
 
-/** Represent a type of scheduling. A typical cuttle scheduling is [[timeseries.TimeSeries TimeSeries]] for example, that
-  * is a scheduling based on a calendar. */
+/** Represent a type of scheduling.*/
 trait Scheduling extends Product with Serializable {
 
   /** The [[SchedulingContext]] type that will be passed to [[Execution]] created by

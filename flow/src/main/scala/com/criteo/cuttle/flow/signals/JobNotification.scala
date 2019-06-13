@@ -1,7 +1,7 @@
 package com.criteo.cuttle.flow.signals
 
 import cats.effect.{Concurrent, ContextShift, IO}
-import com.criteo.cuttle.flow.FlowScheduling
+import com.criteo.cuttle.flow.{FlowArg, FlowScheduling, NoArg}
 
 import scala.concurrent.{Future, Promise}
 import scala.util.{Failure, Success}
@@ -22,9 +22,10 @@ object SignallingJob {
     * @todo What to do when not consuming msg ?
     */
   def kafka(jobId : String, event : String, kafkaService : KafkaNotification[String, String])
-           (implicit F : Concurrent[IO], cs : ContextShift[IO]): Job[FlowScheduling] = {
+           (implicit F : Concurrent[IO], cs : ContextShift[IO]): Job[FlowScheduling[NoArg, NoArg]] = {
 
-    Job(jobId, FlowScheduling(), s"waiting for event ${event}", SignalJob(event)) { implicit e =>
+    Job(jobId, s"waiting for event ${event}", FlowScheduling(NoArg(), NoArg()), SignalJob(event)) {
+      implicit e =>
 
       val p = Promise[Unit]()
 
@@ -66,10 +67,10 @@ object SignallingJob {
     */
 
   def kafkaSE(jobId : String, event : String, kafkaService : KafkaNotification[String, String])
-             (effect : Execution[FlowScheduling] => Completed)
-             (implicit F : Concurrent[IO], cs : ContextShift[IO]): Job[FlowScheduling] = {
+             (effect : Execution[FlowScheduling[_, _]] => Completed)
+             (implicit F : Concurrent[IO], cs : ContextShift[IO]) = {
 
-    Job(jobId, FlowScheduling(), s"waiting for event ${event}", SignalJob(event)) { implicit e =>
+    Job(jobId, s"waiting for event ${event}", FlowScheduling(NoArg(), NoArg()), SignalJob(event)) { implicit e =>
 
       val kafkaPromise = Promise[Unit]()
       val sideEffectPromise = Promise[Unit]()

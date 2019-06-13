@@ -5,7 +5,6 @@ import io.circe._
 import io.circe.syntax._
 import cats.Eq
 import io.circe.Encoder._
-import io.circe.generic.auto._
 
 /** Allow to tag a job. Tags can be used in the UI/API to filter jobs
   * and more easily retrieve them.
@@ -26,8 +25,6 @@ case class Tag(name: String, description: String = "")
   * @param id The internal job id. It will be sued to track the job state in the database, so it must not
   *           change over time otherwise the job will be seen as a new one by the scheduler.
   *           That id, being technical, should only use valid characters such as [a-zA-Z0-9_-.]
-  * @param scheduling The scheduling configuration for the job. For example a [[com.criteo.cuttle.flow Flow]] job can
-  *                   be configured to be hourly or daily, etc.
   * @param name The job name as displayed in the UI.
   * @param description The job description as displayed in the UI.
   * @param tags The job tags used to filter jobs in the UI.
@@ -39,12 +36,14 @@ sealed trait JobKind
 case object NormalJob extends JobKind
 final case class SignalJob(eventTrigger : String) extends JobKind
 
+
 final case class Job[S <: Scheduling](id: String,
-                                scheduling: S,
-                                description: String = "",
-                                kind : JobKind = NormalJob,
-                                tags: Set[Tag] = Set.empty[Tag])
-                               (val effect: SideEffect[S]) {
+                                       description: String = "",
+                                       scheduling: S,
+                                       kind : JobKind = NormalJob,
+                                       tags: Set[Tag] = Set.empty[Tag])(val effect: SideEffect[S])
+{
+
   /** Run this job for the given [[Execution]].
     *
     * @param execution The execution instance.
@@ -65,9 +64,12 @@ case object Job {
 trait Workload[S <: Scheduling] {
   /** All known jobs in this workload. */
   def all: Set[Job[S]]
+
+  /**
+
   /** Represent the jobs as JSON. */
-  def asJson(implicit se : Encoder[Job[S]]): Json = {
-    val jobs = all.asJson
+  def asJson(implicit se : Encoder[Job[S, FlowArg, FlowArg]]): Json = {
+    val jobs = all.map(_.id).asJson
     val tags = all.flatMap(_.tags).asJson
     val dependencies = Json.arr()
     Json.obj(
@@ -76,4 +78,5 @@ trait Workload[S <: Scheduling] {
       "tags" -> tags
     )
   }
+    */
 }
