@@ -181,7 +181,7 @@ object FlowWorkflow {
     if (jobs.isEmpty)
       wf
 
-    val newVertices = wf.vertices.filterNot(jobs)
+    val newVertices = wf.vertices -- jobs
     val newEdges = wf.edges.filterNot(p => jobs.contains(p._1))
 
     new FlowWorkflow {
@@ -191,6 +191,25 @@ object FlowWorkflow {
     }
   }
 
+
+  /** *
+    * Replace the job
+    *
+    * @param wf
+    * @param jobs
+    * @return a new workflow without the `jobs`
+    */
+  def replace(wf: FlowWorkflow, job: FlowJob): FlowWorkflow = {
+
+    val newVertices = wf.vertices.filterNot(p => p.id == job.id) + job
+    val newEdgesFrom = wf.edges.filter(p => p._1 == job).map(p => (job, p._2, p._3))
+    val newEdgesTo = wf.edges.filter(p => p._2 == job).map(p => (p._1, job, p._3))
+    val wfWithoutEdgeJob = wf.edges.filterNot(p => p._1 == job || p._2 == job)
+    new FlowWorkflow {
+      def vertices = newVertices
+      def edges = wfWithoutEdgeJob ++ newEdgesFrom ++ newEdgesTo
+    }
+  }
 
   /** *
     * Take off every jobs that does not come from a `kind` edge

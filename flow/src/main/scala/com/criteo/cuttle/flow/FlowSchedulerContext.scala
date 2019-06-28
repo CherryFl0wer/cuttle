@@ -13,13 +13,9 @@ import io.circe.generic.semiauto.deriveDecoder
 
 case class FlowSchedulerContext(start : Instant,
                                 projectVersion: String = "",
-                                workflowId : String,
-                                resultsFromPreviousNodes : Option[Map[String, Json]] = None) extends SchedulingContext {
+                                workflowId : String) extends SchedulingContext {
 
   import cats.free.Free
-
-  // Is the result of the job
-  var result : Json = Json.Null
 
   override def asJson: Json = FlowSchedulerContext.encoder(this)
 
@@ -28,7 +24,7 @@ case class FlowSchedulerContext(start : Instant,
   def toId: String = s"${start}-${workflowId}-${UUID.randomUUID().toString}"
 
   def compareTo(other: SchedulingContext) = other match {
-    case FlowSchedulerContext(timestamp, _, _, _) => start.compareTo(timestamp) // Priority compare
+    case FlowSchedulerContext(timestamp, _, _) => start.compareTo(timestamp) // Priority compare
   }
 
 }
@@ -48,8 +44,7 @@ object FlowSchedulerContext {
       Json.obj(
         "startAt" -> a.start.asJson,
         "workflowId" -> a.workflowId.asJson,
-        "projectVersion" -> a.projectVersion.asJson,
-        "cascadingResults" -> a.resultsFromPreviousNodes.asJson
+        "projectVersion" -> a.projectVersion.asJson
       )
     }
   }

@@ -5,7 +5,6 @@ import scala.language.implicitConversions
 import com.criteo.cuttle.flow.FlowSchedulerUtils.FlowJob
 import io.circe.{Decoder, Encoder, HCursor, Json}
 import io.circe.syntax._
-import cats.syntax.either._
 
 
 

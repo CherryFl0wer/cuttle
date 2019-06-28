@@ -70,7 +70,7 @@ private[flow] object Database {
         from_graph   VARCHAR(255) NOT NULL,
         step_id  TEXT NOT NULL,
         inputs JSONB NULL,
-        result JSONB NULL,
+        outputs JSONB NULL,
         PRIMARY KEY(workflow_id, step_id)
       );
       CREATE INDEX flow_results_workflowid ON flow_results (workflow_id);
@@ -96,10 +96,10 @@ private[flow] object Database {
   val doSchemaUpdates: ConnectionIO[Unit] = CriteoCoreUtils.updateSchema("flow", schema)
 
 
-  def insertResult(wfHash : String, wfId : String, stepId : String, inputs : Json, result : Json) =
+  def insertResult(wfHash : String, wfId : String, stepId : String, inputs : Json, outputs : Json) =
     sql"""
-          INSERT INTO flow_results (workflow_id, from_graph, step_id, inputs, result)
-          VALUES(${wfId}, ${wfHash}, ${stepId}, ${inputs}, ${result})
+          INSERT INTO flow_results (workflow_id, from_graph, step_id, inputs, outputs)
+          VALUES(${wfId}, ${wfHash}, ${stepId}, ${inputs}, ${outputs})
       """.update.run
 
   // TODO : Maybe return list or one response.

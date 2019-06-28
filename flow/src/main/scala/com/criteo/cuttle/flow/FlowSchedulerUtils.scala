@@ -13,7 +13,6 @@ object FlowSchedulerUtils {
   type Executable = (FlowJob, FlowSchedulerContext) // A job to be executed
   type RunJob = (FlowJob, FlowSchedulerContext, Future[Completed]) // Job, Context, Result
   type JobState = Map[FlowJob, JobFlowState]
-  type JobResults = Map[FlowJob, Json]
 
   val UTC: ZoneId = ZoneId.of("UTC")
 

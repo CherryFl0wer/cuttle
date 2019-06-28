@@ -1,9 +1,10 @@
 package com.criteo.cuttle.flow
 
-import scala.collection.mutable.{ListBuffer, Stack, Map => MutableMap, Set => MutableSet}
-
+import scala.collection.mutable.{ListBuffer, Stack, Map => MutableMap, Set => MutableSet, SortedSet => SSet}
 import com.criteo.cuttle.flow.graph.mutable.{Node => MutableNode}
 import com.criteo.cuttle.flow.graph.mutable.{Graph => MutableGraph}
+
+import scala.collection.mutable
 
 package object graph {
 
@@ -17,16 +18,16 @@ package object graph {
 
     val graph = MutableGraph.fromVertexAndEdgeList(vertices, edges)
 
-    val nodesToVisit = MutableSet(graph.nodes.filter(_.isOrphanNode): _*)
+    val nodesToVisit = ListBuffer(graph.nodes.filter(_.isOrphanNode): _*)
 
     while (nodesToVisit.nonEmpty) {
       val orphanNode = nodesToVisit.head
       topologicalOrder.append(orphanNode)
-      nodesToVisit.remove(orphanNode)
+      nodesToVisit.remove(0)
       while (orphanNode.children.nonEmpty) {
         val child = orphanNode.children.head
         orphanNode.removeChild(child)
-        if (child.isOrphanNode) nodesToVisit.add(child)
+        if (child.isOrphanNode) nodesToVisit.append(child)
       }
     }
 

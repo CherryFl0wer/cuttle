@@ -53,19 +53,14 @@ object TestWorkflow extends IOApp {
   )
 
   private val booJob = {
-    Job("Step-Boo", FlowScheduling(Some("{param: \"ok\"}")), "Booing") {
+    Job("Step-Boo", FlowScheduling(inputs = Json.obj("ok" -> "tres".asJson)), "Booing") {
       implicit e =>
 
         e.streams.info("Testing Boo")
-        val jsonInputs : Json = parse(e.job.scheduling.inputs.get) match {
+        val jsonInputs : Json = parse(e.job.scheduling.inputs.noSpaces) match {
           case Left(_) => Json.Null
           case Right(parsed) => parsed
         }
-
-        e.context.result = Json.obj(
-          "response" -> "as two".asJson,
-          "inputsWas" -> jsonInputs
-        )
 
         Future.successful(Finished)
     }
@@ -91,7 +86,6 @@ object TestWorkflow extends IOApp {
     Job("Step-MakePredic", FlowScheduling(), "predicting") {
       implicit e =>
         e.streams.info("Testing MakePredic")
-        e.streams.writeln(e.context.resultsFromPreviousNodes.get(prevStep).toString)
         Future.successful(Finished)
     }
   }
@@ -100,9 +94,6 @@ object TestWorkflow extends IOApp {
     Job("Step-Training", FlowScheduling(), "train") {
       implicit e =>
         e.streams.info("Testing Training")
-        e.context.result = Json.obj(
-          "name" -> "job training".asJson
-        )
         Future.successful(Finished)
     }
   }

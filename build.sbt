@@ -4,7 +4,7 @@ val writeClasspath = taskKey[File]("Write the project classpath to a file.")
 val VERSION = "0.9.3-SNAPSHOT"
 
 lazy val catsCore = "1.6.0"
-lazy val circe = "0.10.1"
+lazy val circe = "0.11.0"
 lazy val doobie = "0.6.0"
 
 addCompilerPlugin("org.spire-math" % "kind-projector" % "0.9.9" cross CrossVersion.binary)
@@ -100,7 +100,8 @@ lazy val cuttle =
         "org.postgresql" % "postgresql" % "42.2.5",
         "org.tpolecat" %% "doobie-postgres" % "0.6.0",
         "org.apache.kafka" %% "kafka" % "0.10.2.2",
-        "org.scala-lang.modules" %% "scala-async" % "0.9.7"
+        "org.scala-lang.modules" %% "scala-async" % "0.9.7",
+        "io.circe" %% "circe-optics" % "0.11.0"
       ),
       libraryDependencies ++= Seq(
         "org.tpolecat" %% "doobie-core",

@@ -52,6 +52,7 @@ final case class Job[S <: Scheduling](id: String,
     */
   private[cuttle] def run(execution: Execution[S]): Future[Completed] =
     effect(execution)
+
 }
 
 /** Companion object for [[Job]]. */

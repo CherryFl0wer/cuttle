@@ -204,7 +204,8 @@ case class Execution[S <: Scheduling](
   platforms: Seq[ExecutionPlatform],
   projectName: String,
   projectVersion: String,
-  previousFailures: List[ExecutionLog]
+  previousFailures: List[ExecutionLog],
+  optic : io.circe.optics.JsonPath = io.circe.optics.JsonPath.root
 )(implicit val executionContext: SideEffectThreadPool) {
 
   private var waitingSeconds = 0

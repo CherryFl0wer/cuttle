@@ -3,40 +3,42 @@ package com.criteo.cuttle.examples
 import cats.effect._
 import com.criteo.cuttle._
 import com.criteo.cuttle.flow._
-
+import io.circe.Json
 import scala.concurrent.Future
 
-
-/**
-  * The goal of this test is to get to work the routing system
-  */
 
 object TestWorkflow2 extends IOApp {
 
   import com.criteo.cuttle.platforms.local._
-  import io.circe.Json
-  import io.circe.parser.parse
-  import io.circe.syntax._
 
   def run(args: List[String]): IO[ExitCode] = {
 
-    val js = jobs(7)
-    /*val wf = dataprepJob.error(errorJob) && booJob.error(errorJob)
-    val wf2 = (wf --> js(2).error(errorJob) && js(3).error(error2Job)
-    val wf3 = wf2 --> js(4).error(error2Job) */
+    import io.circe.syntax._
 
-    val m =
+    val job1 = Job(s"step-one", FlowScheduling(inputs = Json.obj("audience" -> "step is one".asJson))) { implicit e =>
+      val x = e.optic.audience.string.getOption(e.job.scheduling.inputs).get  + " passed to step two"
+      Future.successful(Output(Json.obj("aud" -> x.asJson)))
+    }
 
-    val run = FlowProject()(wf3).start()
+    val job1bis = Job(s"step-one-bis", FlowScheduling()) { implicit e =>
+      Future.successful(Output(Json.obj("aud" -> "albuquerque".asJson)))
+    }
 
-    val list = run.compile.toList.unsafeRunSync
-    list.foreach(p => println(p))
+    val job2 = Job(s"step-two", FlowScheduling(inputs = Json.obj("pedo" -> "velo".asJson))) { implicit e =>
+      val in = e.job.scheduling.inputs
+      val y = e.optic.pedo.string.getOption(in)
+      val x = e.optic.aud.string.getOption(in)  + " passed to step three"
+      Future.successful(Output(x.asJson))
+    }
+
+    val wf = (job1 && job1bis) --> job2
+
+    val project = FlowProject("test03", "Test of jobs I/O")(wf)
+    val browse = project.start().compile.toList.unsafeRunSync
+
+    browse.foreach(p => println(p))
     IO(ExitCode.Success)
   }
-
-  private def jobs(howMuch : Int): Vector[Job[FlowScheduling]] = Vector.tabulate(howMuch)(i =>
-    Job(i.toString, FlowScheduling())((_: Execution[_]) => Future.successful(Finished))
-  )
 
   private val errorJob = {
     Job("Step-Error", FlowScheduling(), "Error") {
@@ -46,99 +48,21 @@ object TestWorkflow2 extends IOApp {
         Future { Finished }
     }
   }
+  private val fooJob = Job("Step-Foo", FlowScheduling(), "Fooing") {
+    implicit e: Execution[FlowScheduling] =>
+      import io.circe.syntax._
+      e.streams.info("Testing Foo")
 
-  private val error2Job = {
-    Job("Step-Error2", FlowScheduling(), "Error") {
-      implicit e =>
-
-        e.streams.info("We got an error 2 :'( ")
-        Future { Finished }
-    }
+      Future { Output( Json.obj("testing" -> "valid".asJson)) }
   }
 
-  private val error3Job = {
-    Job("Step-Error3", FlowScheduling(), "Error") {
-      implicit e =>
-
-        e.streams.info("We got an error 3 :'( ")
-        Future { Finished }
-    }
-  }
-
-  private val error4Job = {
-    Job("Step-Error4", FlowScheduling(), "Error") {
-      implicit e =>
-
-        e.streams.info("We got an error 4 :'( ")
-        Future { Finished }
-    }
-  }
-
-  private val endJob = {
-    Job("Step-End", FlowScheduling(), "Ending process") {
-      implicit e =>
-
-        e.streams.info("We got to an End  :) ")
-
-        Future.successful(Finished)
-    }
-  }
-
-  private val fooJob = {
-
-    Job[FlowScheduling]("Step-Foo", FlowScheduling(), "Fooing") {
+  private val endJob = Job("Step-End", FlowScheduling(), "Ending process") {
       implicit e: Execution[FlowScheduling] =>
-        e.streams.info("Testing Foo")
-
-        Future { Finished }
-    }
-  }
-
-  private val modellingJob = {
-    Job("Step-Modelling", FlowScheduling(), "modeling") {
-      implicit e =>
-        e.streams.info("Testing Modelling")
+        e.streams.info("We got to an End  :) ")
+        val testing = e.optic.testing.string.getOption(e.job.scheduling.inputs)
+        e.streams.info(testing.fold("Nothing")(identity))
+        e.streams.info()
         Future.successful(Finished)
-    }
-  }
-
-  private val booJob = {
-    Job("Step-Boo", FlowScheduling(Some("{param: \"ok\"}")), "Booing") {
-      implicit e =>
-
-        e.streams.info("Testing Boo")
-        val jsonInputs : Json = parse(e.job.scheduling.inputs.get) match {
-          case Left(_) => Json.Null
-          case Right(parsed) => parsed
-        }
-
-        e.context.result = Json.obj(
-          "response" -> "as two".asJson,
-          "inputsWas" -> jsonInputs
-        )
-
-        Future.successful(Finished)
-    }
-  }
-
-  private val makeTrainJob = {
-    Job("Step-Training", FlowScheduling(), "train") {
-      implicit e =>
-        e.streams.info("Testing Training")
-        e.context.result = Json.obj(
-          "mode" -> "job training".asJson
-        )
-        Future.successful(Finished)
-    }
-  }
-
-  private val makePredictionJob =  {
-    Job("Step-MakePredic", FlowScheduling(), "predicting") {
-      implicit e =>
-        e.streams.info("Testing MakePredic")
-        e.streams.writeln(e.context.resultsFromPreviousNodes.get("Step-Training").toString)
-        Future.successful(Finished)
-    }
   }
 
 

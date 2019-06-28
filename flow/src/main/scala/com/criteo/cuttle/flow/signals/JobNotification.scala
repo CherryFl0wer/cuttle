@@ -37,10 +37,8 @@ object SignallingJob {
         .last
         .unsafeToFuture()
         .onComplete {
-          cb => cb match {
-            case Failure(err) => p.failure(new Exception(s"Job ${e.job.id} failed to complete correcty because ${err.getMessage}"))
-            case Success(value) => p.success(())
-          }
+          case Failure(err) => p.failure(new Exception(s"Job ${e.job.id} failed to complete correcty because ${err.getMessage}"))
+          case Success(value) => p.success(())
         }
 
       p.future.map(_ => Finished)
@@ -87,19 +85,15 @@ object SignallingJob {
         .unsafeToFuture()
 
       sideEffectFuture.onComplete {
-        cb => cb match {
-          case Failure(err) => sideEffectPromise.failure(
-            new Exception(s"Job ${e.job.id} failed to execute side effect function, reason is : ${err.getMessage}")
-          )
-          case Success(value) => sideEffectPromise.success(())
-        }
+        case Failure(err) => sideEffectPromise.failure(
+          new Exception(s"Job ${e.job.id} failed to execute side effect function, reason is : ${err.getMessage}")
+        )
+        case Success(value) => sideEffectPromise.success(())
       }
 
       kafkaFuture.onComplete {
-          cb => cb match {
-            case Failure(err) => kafkaPromise.failure(new Exception(s"Job ${e.job.id} failed to complete correctly because ${err.getMessage}"))
-            case Success(value) => kafkaPromise.success(())
-          }
+        case Failure(err) => kafkaPromise.failure(new Exception(s"Job ${e.job.id} failed to complete correctly because ${err.getMessage}"))
+        case Success(value) => kafkaPromise.success(())
       }
 
       Future

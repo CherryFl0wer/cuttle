@@ -42,21 +42,19 @@ class FlowProject(val workflowId: String,
 
     import doobie.implicits._
     import fs2.Stream
+    import cats.effect.concurrent.Ref
 
     val xa = CoreDB.connect(databaseConfig)(logger)
     val executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, version, logsRetention)(retryStrategy)
 
     logger.info("Applying migrations to database")
-    import cats.effect.concurrent.Ref
+
 
     for {
       _      <- Stream.eval(FlowDB.doSchemaUpdates.transact(xa))
       _       = logger.info("Database up-to-date")
-
       refState   <- Stream.eval(Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState]))
-      refResults <- Stream.eval(Ref.of[IO, Map[FlowJob, Json]](Map.empty[FlowJob, Json]))
-
-      scheduler = FlowScheduler(logger, workflowId, refState, refResults)
+      scheduler = FlowScheduler(logger, workflowId, refState)
       serialize <- Stream.eval(FlowDB.serializeGraph(jobs).value.transact(xa))
       stream <- serialize match {
         case Left(e) => Stream(Left(e))

@@ -1,11 +1,12 @@
 package com.criteo.cuttle.flow
 
 import cats.effect.{ContextShift, IO, Timer}
-import com.criteo.cuttle.{Execution, Finished, Job, ITTestScheduling}
+import com.criteo.cuttle.{Execution, Finished, ITTestScheduling, Job, Output}
 
 import scala.concurrent.duration._
 import org.scalatest._
 import com.criteo.cuttle.Utils.logger
+import io.circe.Json
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.FiniteDuration
@@ -243,8 +244,34 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     browse.last shouldBe Right(Set.empty)
   }
 
-  test("it should execute node 1 and pass data to node 2") {
+
+  test("it should ") {
+    import io.circe.syntax._
+
+    val job1 = Job(s"step-one", FlowScheduling(inputs = Json.obj("audience" -> "step is one".asJson))) { implicit e =>
+      val x = e.optic.audience.string.getOption(e.job.scheduling.inputs)  + " passed to step two"
+      Future.successful(Output(Json.obj("aud" -> x.asJson)))
+    }
+
+    val job1bis = Job(s"step-one-bis", FlowScheduling()) { implicit e =>
+      Future.successful(Output(Json.obj("aud" -> "albuquerque".asJson)))
+    }
+
+    val job2 = Job(s"step-two", FlowScheduling(inputs = Json.obj("pedo" -> "velo".asJson))) { implicit e =>
+      val in = e.job.scheduling.inputs
+      val y = e.optic.pedo.string.getOption(in)
+      val x = e.optic.aud.string.getOption(in)  + " passed to step three"
+      Future.successful(Output(x.asJson))
+    }
+
+    val wf = (job1 && job1bis) --> job2
+
+    val project = FlowProject("test03", "Test of jobs I/O")(wf)
+    val browse = project.start().compile.toList.unsafeRunSync
+
   }
+
+  //TODO Add tests on
 
   //TODO Add a test fail on a success only workflow
 }

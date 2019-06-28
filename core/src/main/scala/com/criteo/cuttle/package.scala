@@ -4,12 +4,9 @@ import scala.concurrent._
 import cats.effect.IO
 import cats.free._
 import doobie._
-import io.circe.Decoder.Result
+import io.circe.Decoder.{Result, _}
 import io.circe.{Decoder, Encoder, HCursor, Json}
-
-
 import cats.implicits._
-import io.circe.Decoder._
 import io.circe.Encoder._
 import io.circe.syntax._
 
@@ -31,6 +28,9 @@ package cuttle {
     * }}}
     */
   case object Finished extends Completed
+
+
+  case class Output(res : Json) extends Completed
 
 }
 
@@ -86,14 +86,14 @@ package object cuttle {
 
 
   implicit def jobDecoder[S <: Scheduling : Decoder] = new Decoder[JobApplicable[S]] {
-    override def apply(cursor : HCursor) : Result[JobApplicable[S]] = for {
-        id   <- cursor.downField("id").as[String]
-        kind <- cursor.downField("kind").as[JobKind]
-        description <- cursor.downField("description").as[String]
-        tags <- cursor.downField("tags").as[Set[String]]
-        scheduling <- cursor.downField("scheduling").as[S]
-      } yield Job[S](id, scheduling, description, kind, tags.map(t => Tag(t))) _
 
+    override def apply(cursor : HCursor) : Result[JobApplicable[S]] = for {
+      id   <- cursor.downField("id").as[String]
+      kind <- cursor.downField("kind").as[JobKind]
+      description <- cursor.downField("description").as[String]
+      tags <- cursor.downField("tags").as[Set[String]]
+      scheduling <- cursor.downField("scheduling").as[S]
+    } yield Job[S](id, scheduling, description, kind, tags.map(t => Tag(t))) _
   }
 
   implicit def jobEncoder[S <: Scheduling : Encoder] = new Encoder[Job[S]] {
