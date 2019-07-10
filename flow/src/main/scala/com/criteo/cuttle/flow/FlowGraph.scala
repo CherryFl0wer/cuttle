@@ -14,11 +14,11 @@ import scala.concurrent.duration.Duration
 /**
   * @todo Change it to fit to Cats
 * */
-class FlowProject(val workflowId: String,
-                  val version: String,
-                  val description: String,
-                  val jobs: FlowWorkflow,
-                  val logger: Logger) {
+class FlowGraph(val workflowId: String,
+                val version: String,
+                val description: String,
+                val jobs: FlowWorkflow,
+                val logger: Logger) {
 
   import cats.implicits._
   /**
@@ -33,7 +33,7 @@ class FlowProject(val workflowId: String,
     * @param
     */
   def start(
-             platforms: Seq[ExecutionPlatform] = FlowProject.defaultPlatforms,
+             platforms: Seq[ExecutionPlatform] = FlowGraph.defaultPlatforms,
              retryStrategy: Option[RetryStrategy] = None,
              paused: Boolean = false,
              databaseConfig: DatabaseConfig = DatabaseConfig.fromEnv,
@@ -68,10 +68,10 @@ class FlowProject(val workflowId: String,
 
 }
 
-object FlowProject {
+object FlowGraph {
 
 
-  private[FlowProject] def defaultPlatforms: Seq[ExecutionPlatform] = {
+  private[FlowGraph] def defaultPlatforms: Seq[ExecutionPlatform] = {
     import platforms._
 
     Seq(
@@ -82,8 +82,7 @@ object FlowProject {
   }
 
   /**
-    * Create a new project.
-    * @param workflowId workflow id
+    * Create a new graph scheduler to start.
     * @param version The project version as displayed in the UI.
     * @param description The project version as displayed in the UI.
     * @param jobs The workflow to run in this project.
@@ -91,7 +90,7 @@ object FlowProject {
     */
   def apply(version: String = "", description: String = "")
            (jobs: FlowWorkflow)
-           (implicit logger: Logger): FlowProject = // implicit wfd : Decoder[FlowWorkflow]
-    new FlowProject(Instant.now() + "-" + UUID.randomUUID().toString, version, description, jobs, logger)
+           (implicit logger: Logger) =
+    IO(new FlowGraph(Instant.now() + "-" + UUID.randomUUID().toString, version, description, jobs, logger))
 
 }

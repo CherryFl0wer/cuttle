@@ -73,7 +73,7 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
     val wf = (job(0) && signalJ) --> job(1) --> job(2)
 
-    val project = FlowProject("test03", "Test of jobs signals")(wf)
+    val project = FlowGraph("test03", "Test of jobs signals")(wf)
 
     val toPush = flowTestSignalTopic.pushOne((project.workflowId, "signal-00-test"))
 
@@ -116,7 +116,7 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
     val wf = job(0) --> (job(1) && job(2)) --> signalJ1 --> (job(4) && job(5)) --> (job(6) && signalJ2) --> job(7)
 
-    val project = FlowProject("test04", "Test of jobs signals")(wf)
+    val project = FlowGraph("test04", "Test of jobs signals")(wf)
 
     val pusher = for {
       _ <- Stream.awakeEvery[IO](5.seconds).head
@@ -168,7 +168,7 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     // it is possible to catch error on a signal because signal job return an exception
     val wf = job(0) --> (job(1) && job(2)) --> signalJ1.error(errorJob) --> (job(4) && job(5)) --> (job(6) && signalJ2) --> job(7)
 
-    val project = FlowProject("test04", "Test of jobs signals")(wf)
+    val project = FlowGraph("test04", "Test of jobs signals")(wf)
 
     val pusher = for {
       _ <- Stream.awakeEvery[IO](5.seconds).head

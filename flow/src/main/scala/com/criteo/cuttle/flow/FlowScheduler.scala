@@ -14,7 +14,10 @@ import scala.concurrent.Future
 import cats.effect.concurrent.{Ref => CatsRef}
 import cats.effect.IO
 import cats.implicits._
+import com.criteo.cuttle.flow.utils.JobUtils
+import fs2.concurrent.Topic
 
+import scala.annotation.tailrec
 import scala.collection.mutable.{LinkedHashSet, ListBuffer}
 
 
@@ -25,6 +28,7 @@ import scala.collection.mutable.{LinkedHashSet, ListBuffer}
 case class FlowScheduler(logger: Logger,
                          workflowdId : String,
                          refState : CatsRef[IO, JobState]) extends Scheduler[FlowScheduling] {
+
 
   override val name = "flow"
 
@@ -58,10 +62,19 @@ case class FlowScheduler(logger: Logger,
       }
     }.keySet
 
-  private def mergeDuplicateInJson(initial : (String, Json), nexts : List[(String, Json)]) = {
+  /**
+    Merge jsons together, if there is two key similar at the first level then create a map where
+    the keys are nexts._1
+    * @param initial initial json
+    * @param nexts list of others json, tuple containing a string defining the name of the json and a Json attached to it
+    * @return
+    */
+  private def mergeDuplicateJson(initial : (String, Json), nexts : List[(String, Json)]) = {
     import io.circe.Json.fromJsonObject
 
     val mergedKeys : ListBuffer[String] = ListBuffer.empty
+
+    def format(key : String) = key.replaceAll("(\\s+|[[:punct:]])", "_")
 
     nexts.fold(initial) {
       case (accInit, (rightJsonName, rightJsonVal)) =>
@@ -69,7 +82,7 @@ case class FlowScheduler(logger: Logger,
         (accInit._2.asObject, rightJsonVal.asObject) match {
           case (Some(lhs), Some(rhs)) => {
             fromJsonObject(rhs.toList.foldLeft(lhs) {
-              case (leftJson, (rkey, rvalue)) => // breadth over right json
+              case (leftJson, (rkey, rvalue)) => // traversal over right json
 
                 lhs(rkey).fold(leftJson.add(rkey, rvalue)) { leftValJson => // If right key exist in left json
                   if (mergedKeys.contains(rkey)) {
@@ -93,6 +106,24 @@ case class FlowScheduler(logger: Logger,
     }
   }
 
+
+  /**
+    Format all the keys on a json recursively depending on a function
+    * @todo would be good to make it tailrec
+    * @param json
+    * @return
+    */
+
+  private def formatKey(json : Json, format : String => String): Json = {
+    import io.circe.Json.fromJsonObject
+
+    json.asObject match {
+      case Some(js) => fromJsonObject(js.toList.foldLeft(Json.Null.asObject.get) { case (acc, (key, value)) =>
+        acc.add(format(key), formatKey(value, format))
+      })
+      case _ => Json.Null
+    }
+  }
   /**
       Save job's result in the database.
     * @param wfHash workflow hash
@@ -136,7 +167,7 @@ case class FlowScheduler(logger: Logger,
     * @param workflow To get the next jobs to run and the result from previous node
     * @param executor To get data for context job
     * @param state Current state of the jobs
-    * @return A sequence of executable jobs
+    * @return A sequence of executable jobs with their new formated new inputs
     */
 
   private[flow] def jobsToRun(workflow: FlowWorkflow,
@@ -170,9 +201,9 @@ case class FlowScheduler(logger: Logger,
     val jobs = jobsAllowedToRun(newWorkflow.roots)
 
     jobs.map { currentJob =>
-      val newInputs = mergeDuplicateInJson(
-        (currentJob.id, currentJob.scheduling.inputs),
-        workflow.parentsOf(currentJob).map(job => (job.id, job.scheduling.outputs)).toList
+      val newInputs = mergeDuplicateJson(
+        (JobUtils.formatName(currentJob.id), currentJob.scheduling.inputs),
+        workflow.parentsOf(currentJob).map(job => (JobUtils.formatName(job.id), job.scheduling.outputs)).toList
       )._2
       val jobWithInput = currentJob.copy(scheduling = FlowScheduling(inputs = newInputs))(currentJob.effect)
       (jobWithInput, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId))
@@ -182,7 +213,7 @@ case class FlowScheduler(logger: Logger,
 
 
   /**
-    * @param workflow Workflow used to get the next jobs to run
+    * @param wf Workflow used to get the next jobs to run
     * @param executor Execute the side effect of a job
     * @param xa doobie sql
     * @param running Set of current job running (can have completed jobs)
@@ -220,7 +251,7 @@ case class FlowScheduler(logger: Logger,
       workflowUpdated <- wf.get
       runningSeq = jobsToRun(workflowUpdated, executor, stateSnapshot)
 
-      newExecutions = executor.runAll(runningSeq) // TODO Change core to return IO
+      newExecutions = executor.runAll(runningSeq)
 
       // Add execution to state
       execState = newExecutions.map { case (exec, _) => exec.job -> Running(exec.id) }.toMap

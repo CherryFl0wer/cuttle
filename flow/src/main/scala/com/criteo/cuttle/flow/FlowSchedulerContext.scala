@@ -15,8 +15,6 @@ case class FlowSchedulerContext(start : Instant,
                                 projectVersion: String = "",
                                 workflowId : String) extends SchedulingContext {
 
-  import cats.free.Free
-
   override def asJson: Json = FlowSchedulerContext.encoder(this)
 
   override def logIntoDatabase: ConnectionIO[String] = Database.serializeContext(this)
