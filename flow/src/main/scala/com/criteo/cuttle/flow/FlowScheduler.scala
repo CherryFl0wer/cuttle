@@ -15,9 +15,6 @@ import cats.effect.concurrent.{Ref => CatsRef}
 import cats.effect.IO
 import cats.implicits._
 import com.criteo.cuttle.flow.utils.JobUtils
-import fs2.concurrent.Topic
-
-import scala.annotation.tailrec
 import scala.collection.mutable.{LinkedHashSet, ListBuffer}
 
 
@@ -73,9 +70,6 @@ case class FlowScheduler(logger: Logger,
     import io.circe.Json.fromJsonObject
 
     val mergedKeys : ListBuffer[String] = ListBuffer.empty
-
-    def format(key : String) = key.replaceAll("(\\s+|[[:punct:]])", "_")
-
     nexts.fold(initial) {
       case (accInit, (rightJsonName, rightJsonVal)) =>
         (accInit._1,
@@ -83,7 +77,6 @@ case class FlowScheduler(logger: Logger,
           case (Some(lhs), Some(rhs)) => {
             fromJsonObject(rhs.toList.foldLeft(lhs) {
               case (leftJson, (rkey, rvalue)) => // traversal over right json
-
                 lhs(rkey).fold(leftJson.add(rkey, rvalue)) { leftValJson => // If right key exist in left json
                   if (mergedKeys.contains(rkey)) {
                     leftJson.remove(rkey)
