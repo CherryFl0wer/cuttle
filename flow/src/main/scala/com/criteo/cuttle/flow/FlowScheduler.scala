@@ -60,6 +60,8 @@ case class FlowScheduler(logger: Logger,
     }.keySet
 
   /**
+
+  @todo move code elsewhere
     Merge jsons together, if there is two key similar at the first level then create a map where
     the keys are nexts._1
     * @param initial initial json
@@ -99,24 +101,6 @@ case class FlowScheduler(logger: Logger,
     }
   }
 
-
-  /**
-    Format all the keys on a json recursively depending on a function
-    * @todo would be good to make it tailrec
-    * @param json
-    * @return
-    */
-
-  private def formatKey(json : Json, format : String => String): Json = {
-    import io.circe.Json.fromJsonObject
-
-    json.asObject match {
-      case Some(js) => fromJsonObject(js.toList.foldLeft(Json.Null.asObject.get) { case (acc, (key, value)) =>
-        acc.add(format(key), formatKey(value, format))
-      })
-      case _ => Json.Null
-    }
-  }
   /**
       Save job's result in the database.
     * @param wfHash workflow hash
@@ -156,6 +140,28 @@ case class FlowScheduler(logger: Logger,
 
 
   /**
+    @todo move code elsewhere
+     Format every key of the given json by using the formatFunc.
+    * @param json The json to format
+    * @param formatFunc The function to transform the key
+    * @return the new json
+    */
+  private def formatKeyOnJson(json : Json, formatFunc : String => String) : Json = {
+    @scala.annotation.tailrec
+    def format(jsonAcc : JsonObject, jsonContent : List[(String, Json)]) : Json = {
+      jsonContent match {
+        case (key, value) :: tail =>
+          if (value.isObject) {
+             format(jsonAcc.add(formatFunc(key), formatKeyOnJson(value, formatFunc)), tail)
+          } else format(jsonAcc.add(formatFunc(key), value), tail)
+        case  Nil => Json.fromJsonObject(jsonAcc)
+      }
+    }
+    json.asObject.fold(Json.Null)(jsObj => format(JsonObject.empty, jsObj.toList))
+  }
+
+
+  /**
      Select the jobs that will run
     * @param workflow To get the next jobs to run and the result from previous node
     * @param executor To get data for context job
@@ -176,10 +182,7 @@ case class FlowScheduler(logger: Logger,
             discardedJob.add(job)
 
             val errorChild = workflow.childsFromRoute(job, RoutingKind.Failure)
-            errorChild.isEmpty match {
-              case true => acc
-              case _ => acc ++ errorChild
-            }
+            if (errorChild.isEmpty) acc else acc ++ errorChild
           }
           else
             acc + job // Normal success job
@@ -194,10 +197,11 @@ case class FlowScheduler(logger: Logger,
     val jobs = jobsAllowedToRun(newWorkflow.roots)
 
     jobs.map { currentJob =>
-      val newInputs = mergeDuplicateJson(
-        (JobUtils.formatName(currentJob.id), currentJob.scheduling.inputs),
-        workflow.parentsOf(currentJob).map(job => (JobUtils.formatName(job.id), job.scheduling.outputs)).toList
-      )._2
+      val newInputs = formatKeyOnJson(mergeDuplicateJson(
+        (currentJob.id, currentJob.scheduling.inputs),
+        workflow.parentsOf(currentJob).map(job => (job.id, job.scheduling.outputs)).toList
+      )._2, JobUtils.formatName)
+
       val jobWithInput = currentJob.copy(scheduling = FlowScheduling(inputs = newInputs))(currentJob.effect)
       (jobWithInput, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId))
     }.toSeq
@@ -262,9 +266,9 @@ case class FlowScheduler(logger: Logger,
 
 
   /***
-    * Starts the scheduler for the given Workflow. Immediatly the scheduler will start interpreting
-    * the workflow and generate [[Execution Executions]] sent to the provided [[Executor]].
-    *
+  Starts the scheduler for the given Workflow. Immediatly the scheduler will start interpreting
+  the workflow and generate [[Execution Executions]] sent to the provided [[Executor]].
+
     * @param jobs The jobs to run in this case in a DAG representation
     * @param executor The executor to use to run the generated [[Execution Executions]].
     * @param xa The doobie transactor to use to persist the scheduler state if needed.
@@ -274,7 +278,7 @@ case class FlowScheduler(logger: Logger,
   def startStream(jobs: Workload[FlowScheduling],
                   executor: Executor[FlowScheduling],
                   xa: XA,
-                  logger: Logger) = {
+                  logger: Logger): fs2.Stream[IO, Either[Throwable, Set[(FlowJob, FlowSchedulerContext, Future[Completed])]]] = {
 
     import fs2.Stream
     val workflow  = jobs.asInstanceOf[FlowWorkflow]

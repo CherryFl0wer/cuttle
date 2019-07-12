@@ -2,8 +2,8 @@ package com.criteo.cuttle.flow.signals
 
 import cats.effect._
 import cats.implicits._
-import fs2.Stream
-import fs2.concurrent.{SignallingRef, Topic}
+import fs2.{Pipe, Stream}
+import fs2.concurrent.{Broadcast, SignallingRef, Topic}
 import fs2.kafka._
 
 import scala.concurrent.duration._
@@ -45,34 +45,41 @@ class KafkaNotification[K, V](kafkaConfig : KafkaConfig, topicEvents : Topic[IO,
   private val consumerSettings = ConsumerSettings[K,V]
     .withBootstrapServers(kafkaConfig.serversToString)
     .withGroupId(kafkaConfig.groupId)
-    .withEnableAutoCommit(true)
-    .withAutoOffsetReset(AutoOffsetReset.Earliest)
+    .withEnableAutoCommit(false)
+    .withAutoOffsetReset(AutoOffsetReset.Latest)
     .withPollTimeout(500.millisecond)
+
+
+
+  private def commitOffsetPipe : Pipe[IO, KafkaNotification.Event[K,V], Unit] = event => (for {
+    msg <- event
+    offset = msg.get.committableOffset
+  } yield offset).through(commitBatchWithin(10, 10 seconds))
+
+
 
   /***
     consume the topic
     * @param cs context shift io
-    * @return A Stream of IO to execute the consumer stream
+    * @return  An infinite stream of consuming message in kafka.
     */
+  def consume = {
 
-  // Used for testing version
-  def consumeAll() = consumerStream[IO]
-    .using(consumerSettings)
-    .evalTap(_.subscribeTo(kafkaConfig.topic))
-    .flatMap(_.stream)
-    .evalTap(ms => IO(println(ms)))
+   // import java.util.concurrent.Executors
+  //  import scala.concurrent.ExecutionContext
 
-
-
-  def consume = for {
-    _ <- consumerStream[IO]
-      .using(consumerSettings)
-      .evalTap(_.subscribeTo(kafkaConfig.topic))
-      .flatMap(_.stream)
-      .map(Some(_))
-      .evalTap(ms => IO(println(ms)))
-      .through(topicEvents.publish)
-  } yield ()
+   // val cachedThreadPool = Executors.newFixedThreadPool(1)
+   // val blockConsumer   = ExecutionContext.fromExecutor(cachedThreadPool)
+    // _ <- IO.shift(blockConsumer)
+    for {
+      _ <- consumerStream[IO]
+        .using(consumerSettings)
+        .evalTap(_.subscribeTo(kafkaConfig.topic))
+        .flatMap(_.stream)
+        .map(Some(_))
+        .broadcastTo(topicEvents.publish, commitOffsetPipe)
+    } yield ()
+  }
 
   /**
     *
@@ -80,9 +87,8 @@ class KafkaNotification[K, V](kafkaConfig : KafkaConfig, topicEvents : Topic[IO,
     * @return
     */
   def subscribeOn(predicate : ConsumerRecord[K,V] => Boolean) = for {
-    msg <- topicEvents.subscribe(20)
+    msg <- topicEvents.subscribe(50)
       .collect { case Some(msg) => msg }
-      .evalTap(ms => IO(println(ms)))
       .filter(ev => predicate(ev.record))
   } yield msg
 

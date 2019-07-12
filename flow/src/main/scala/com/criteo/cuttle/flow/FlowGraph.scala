@@ -19,13 +19,10 @@ class FlowGraph(val workflowId: String,
                 val description: String,
                 val jobs: FlowWorkflow,
                 val logger: Logger) {
-
-  import cats.implicits._
   /**
-    * Start scheduling and execution with the given environment.
-    *
+    Start scheduling and execution with the given environment.
     * @param platforms The configured [[ExecutionPlatform ExecutionPlatforms]] to use to execute jobs.
-    * @param databaseConfig JDBC configuration for MySQL server 5.7. @TODO : Change db type
+    * @param databaseConfig JDBC configuration for Postgresql
     * @param retryStrategy The strategy to use for execution retry. Default to exponential backoff.
     * @param paused Automatically pause all jobs at startup. @unused yet
     * @param logsRetention If specified, automatically clean the execution logs older than the given duration. @unused

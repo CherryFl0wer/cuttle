@@ -5,5 +5,7 @@ object JobUtils {
   def failedJob(msg : String)  = scala.concurrent.Future.failed(new Exception(msg))
 
   // Replace with underscore
-  def formatName(str : String) = str.replaceAll("(\\s|\\.|\\-|\\*|\\+|\\?|\\$|\\^|\\/|\\\\)+", "_")
+  def formatName(str : String) = str.replaceAll("(\\s|\\.|\\-|\\*|\\+|\\?|\\$|\\`|\\^|\\/|\\\\)+", "_")
+
+
 }

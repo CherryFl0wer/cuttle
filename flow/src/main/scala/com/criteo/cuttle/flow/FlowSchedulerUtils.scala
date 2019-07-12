@@ -2,12 +2,16 @@ package com.criteo.cuttle.flow
 
 import java.time.ZoneId
 
+import com.criteo.cuttle.flow.signals.KafkaNotification
 import com.criteo.cuttle.{Completed, Job}
-import io.circe.Json
 
 import scala.concurrent.Future
 
 object FlowSchedulerUtils {
+
+
+  type WFSignalBuilder[K,V] = KafkaNotification[K,V] => FlowWorkflow
+
   type FlowJob = Job[FlowScheduling]
 
   type Executable = (FlowJob, FlowSchedulerContext) // A job to be executed
@@ -46,9 +50,7 @@ object FlowSchedulerUtils {
           hd.size match {
             case m if m >= 1 => { // Whatever the size is, we want the head
               val elm = hd.head.get
-              Pull.output(hd.take(1)) >> (if (over(elm)) Pull.done else go(Stream.eval(call(elm)))
-                )
-
+              Pull.output(hd.take(1)) >> (if (over(elm)) Pull.done else go(Stream.eval(call(elm))))
             }
             case 0 => Pull.done // No element in chunks then done
           }

@@ -2,13 +2,19 @@ package com.criteo.cuttle.flow
 
 import cats.effect.{ContextShift, IO, Timer}
 import com.criteo.cuttle.Utils.logger
-import com.criteo.cuttle.flow.signals.{KafkaConfig, KafkaNotification, SignallingJob}
-import com.criteo.cuttle.{Execution, Finished, Job, ITTestScheduling}
+import com.criteo.cuttle.flow.FlowSchedulerUtils.WFSignalBuilder
+import com.criteo.cuttle.flow.signals.{KafkaConfig, KafkaNotification}
+import com.criteo.cuttle.{Execution, Finished, ITTestScheduling, Job, Output}
+import fs2.Stream
+import io.circe.Json
 import org.scalatest.Matchers
 import org.scalatest.FunSuite
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
+import io.circe.syntax._
+import fs2._
+
 
 /**
   * @summary Functionals tests of the sub-library of scheduling `Flow` placed in [[com.criteo.cuttle.flow._]]
@@ -34,34 +40,62 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
   val failedJob: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job(s"failed-${i.toString}", FlowScheduling())(failedSideEffect))
 
   test("Signal sync") {
-    val flowTestSignalTopic = new KafkaNotification[String, String](KafkaConfig(
-      topic = "test-signal-01",
-      groupId = "flow-signal-test-consumer",
-      servers = List("localhost:9092")))
 
-    val toPush = flowTestSignalTopic.pushOne(("test01-signal", "1")) ++ flowTestSignalTopic.pushOne(("test01-signal", "2")) ++ flowTestSignalTopic.pushOne(("test01-signal", "3"))
-    val msgSent = toPush.compile.toList.unsafeRunSync()
+    import fs2.concurrent.SignallingRef
 
-    val consumed = flowTestSignalTopic
-      .consumeAll()
-      .evalTap(msg => msg.committableOffset.commit)
-      .interruptAfter(5.seconds)
-      .compile
-      .toList
-      .unsafeRunSync()
+    val simpleWorkflow : WFSignalBuilder[String, String] = topic => {
 
+      val job1 = Job(s"step-one", FlowScheduling(inputs = Json.obj("audience" -> "step is one".asJson))) { implicit e =>
+        IO(Finished).unsafeToFuture()
+      }
 
-    consumed.size shouldBe msgSent.size
+      val job1bis = Job(s"step-one-bis", FlowScheduling()) { implicit e =>
+        e.streams.info("On step bis")
 
-    var x = 0
-    consumed.foreach { msg =>
-      msg.record.key shouldBe msgSent(x).records._1.key
-      msg.record.value() shouldBe msgSent(x).records._1.value
-      x += 1
+        val receive = for {
+          value <- topic
+            .subscribeOn(msg => msg.key() == "wf-1" && msg.value() == "step-one")
+            .head
+            .compile
+            .last
+        } yield { Output(Json.obj("aud" -> "step bis is done".asJson)) }
+
+        receive.unsafeToFuture()
+      }
+
+      val job2 = Job(s"step-two", FlowScheduling(inputs = Json.obj("test" -> "final test".asJson))) { implicit e =>
+        val in = e.job.scheduling.inputs
+        val x = e.optic.aud.string.getOption(in).get + " passed to step three"
+        IO(Output(x.asJson)).unsafeToFuture()
+      }
+
+      (job1 && job1bis) --> job2
     }
+
+
+    val program = for {
+      // Initialisation
+      signalManager   <- Stream.eval(KafkaNotification[String, String](KafkaConfig("signal_cuttle", "signals", List("localhost:9092"))))
+      // Setup Workflow
+      _ <- Stream(()).concurrently(signalManager.consume)
+      workflowWithTopic = simpleWorkflow(signalManager)
+      project <- Stream.eval(FlowGraph("test-signal-01", "Test of jobs signal")(workflowWithTopic))
+      // Run it
+      res <- project.start()
+                    .concurrently(signalManager
+                      .pushOne("wf-1", "step-one")
+                      .delayBy[IO](3.seconds)
+                      .map(_ => ())
+                    )
+    } yield res
+
+    val programExecutions = program.compile.toList.unsafeRunSync()
+    programExecutions.length shouldBe 4
+
   }
 
 
+  /*
   test("Job signal on simple workflow `success only job`") {
 
     val flowTestSignalTopic = new KafkaNotification[String, String](KafkaConfig(
@@ -202,7 +236,7 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
       x += 1
     }
   }
-
+*/
 }
 
 
