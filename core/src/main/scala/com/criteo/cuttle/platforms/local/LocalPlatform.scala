@@ -13,9 +13,6 @@ import scala.concurrent.{Future, Promise}
   * The number of concurrently forked processes is limited and can be configured for
   * the platform.
   *
-  * While waiting for the process to be actually forked, the [[com.criteo.cuttle.Job Job]]
-  * [[com.criteo.cuttle.Execution Execution]] is seen as __WAITING__ in the UI.
-  *
   * @param maxForkedProcesses The maximum number of concurrently running processes.
   **/
 case class LocalPlatform(maxForkedProcesses: Int) extends ExecutionPlatform {
@@ -33,8 +30,8 @@ class LocalProcess(command: String) {
 
   private def exec0[S <: Scheduling](
     env: Map[String, String],
-    outLogger: (String) => Unit,
-    errLogger: (String) => Unit
+    outLogger: String => Unit,
+    errLogger: String => Unit
   )(implicit execution: Execution[S]): Future[Completed] = {
     val streams = execution.streams
     streams.debug(s"Forking:")

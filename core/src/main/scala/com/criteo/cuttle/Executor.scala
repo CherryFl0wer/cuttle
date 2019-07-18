@@ -759,8 +759,8 @@ class Executor[S <: Scheduling] private[cuttle] (
                 // retain jobs in recent failures if last failure happened in [now - retryStrategy.retryWindow, now]
 
                 recentFailures.retain {
-                  case (_, (retryExecution, failingJob)) =>
-                    retryExecution.isDefined || (retryStrategy.isDefined && failingJob.isLastFailureAfter(Instant.now.minus(retryStrategy.get.retryWindow)))
+                  case (_, (retryExecution, jobFailing)) =>
+                    retryExecution.isDefined || (retryStrategy.isDefined && jobFailing.isLastFailureAfter(Instant.now.minus(retryStrategy.get.retryWindow)))
                 }
                 val failureKey = (execution.job, execution.context)
                 val failingJob = recentFailures.get(failureKey).map(_._2).getOrElse(FailingJob(Nil, None))

@@ -121,7 +121,8 @@ lazy val flow =
     .settings(commonSettings: _*)
     .settings(
       libraryDependencies ++= Seq(
-        "com.ovoenergy" %% "fs2-kafka" % "0.19.9"
+        "com.ovoenergy" %% "fs2-kafka" % "0.19.9",
+        "co.fs2" %% "fs2-reactive-streams" % "1.0.4"
       ))
     .dependsOn(cuttle % "compile->compile;test->test")
 

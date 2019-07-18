@@ -5,15 +5,11 @@ import java.util.UUID
 
 import cats.effect.IO
 import com.criteo.cuttle.flow.FlowSchedulerUtils.{FlowJob, JobState}
-import com.criteo.cuttle.{DatabaseConfig, ExecutionPlatform, Executor, Logger, RetryStrategy, platforms, Database => CoreDB}
+import com.criteo.cuttle.{ExecutionPlatform, Executor, Logger, RetryStrategy, XA, platforms }
 import com.criteo.cuttle.flow.{Database => FlowDB}
-import io.circe.Json
 
 import scala.concurrent.duration.Duration
 
-/**
-  * @todo Change it to fit to Cats
-* */
 class FlowGraph(val workflowId: String,
                 val version: String,
                 val description: String,
@@ -22,61 +18,53 @@ class FlowGraph(val workflowId: String,
   /**
     Start scheduling and execution with the given environment.
     * @param platforms The configured [[ExecutionPlatform ExecutionPlatforms]] to use to execute jobs.
-    * @param databaseConfig JDBC configuration for Postgresql
-    * @param retryStrategy The strategy to use for execution retry. Default to exponential backoff.
-    * @param paused Automatically pause all jobs at startup. @unused yet
+    * @param retryStrategy The strategy to use for execution retry. Default to None, no retry
     * @param logsRetention If specified, automatically clean the execution logs older than the given duration. @unused
     *
     * @param
     */
-  def start(
-             platforms: Seq[ExecutionPlatform] = FlowGraph.defaultPlatforms,
-             retryStrategy: Option[RetryStrategy] = None,
-             paused: Boolean = false,
-             databaseConfig: DatabaseConfig = DatabaseConfig.fromEnv,
-             logsRetention: Option[Duration] = None
-           ) : fs2.Stream[IO, Either[Throwable, Set[FlowSchedulerUtils.RunJob]]] = {
+  def start(xa : XA,
+            platforms: Seq[ExecutionPlatform] = FlowGraph.defaultPlatforms,
+            retryStrategy: Option[RetryStrategy] = None,
+            logsRetention: Option[Duration] = None) : fs2.Stream[IO, Either[Throwable, Set[FlowSchedulerUtils.RunJob]]] = {
 
     import doobie.implicits._
     import fs2.Stream
     import cats.effect.concurrent.Ref
 
-    val xa = CoreDB.connect(databaseConfig)(logger)
     val executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, version, logsRetention)(retryStrategy)
 
-    logger.info("Applying migrations to database")
-
-
     for {
-      _      <- Stream.eval(FlowDB.doSchemaUpdates.transact(xa))
-      _       = logger.info("Database up-to-date")
       refState   <- Stream.eval(Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState]))
       scheduler = FlowScheduler(logger, workflowId, refState)
       serialize <- Stream.eval(FlowDB.serializeGraph(jobs).value.transact(xa))
       stream <- serialize match {
         case Left(e) => Stream(Left(e))
         case Right(_) =>
-          logger.info("Start workflow")
+          logger.info(s"Start workflow ${workflowId}")
           scheduler.startStream(jobs, executor, xa, logger)
       }
     } yield stream
 
   }
 
+
+
 }
 
 object FlowGraph {
 
 
-  private[FlowGraph] def defaultPlatforms: Seq[ExecutionPlatform] = {
+  def defaultPlatforms: Seq[ExecutionPlatform] = {
     import platforms._
 
     Seq(
       local.LocalPlatform(
-        maxForkedProcesses = 10
+        maxForkedProcesses = 5
       )
     )
   }
+
 
   /**
     * Create a new graph scheduler to start.
