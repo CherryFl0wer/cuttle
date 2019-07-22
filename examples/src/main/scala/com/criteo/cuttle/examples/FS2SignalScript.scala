@@ -21,19 +21,18 @@ object FS2SignalScript extends IOApp {
     }
     val job1bis = Job(s"step-one-bis", FlowScheduling()) { implicit e =>
       e.streams.info("On step bis")
-     /* val receive = for {
-        sig   <- topic.sigRef
-        value <- topic.subscribeOnTopic(e.context.workflowId)
-          .interruptWhen(sig)
+      val receive = for {
+        value <- topic
+          .subscribeOnTopic(e.context.workflowId)
           .head
           .compile
           .toList
         _ <- IO(println(s"Received $value"))
       } yield {
         Output(Json.obj("aud" -> "step is bis".asJson))
-      }*/
-      IO(Output(Json.obj("aud" -> "step is bis".asJson))).unsafeToFuture()
-     // receive.unsafeToFuture()
+      }
+      //IO(Output(Json.obj("aud" -> "step is bis".asJson))).unsafeToFuture()
+      receive.unsafeToFuture()
     }
     val job2    = Job(s"step-two",     FlowScheduling(inputs = Json.obj("test" -> "final test".asJson))) { implicit e =>
       val in = e.job.scheduling.inputs
@@ -46,6 +45,7 @@ object FS2SignalScript extends IOApp {
   def run(args: List[String]): IO[ExitCode] = {
 
     val kafkaConfig = KafkaConfig("cuttle_message", "cuttlemsg", List("localhost:9092"))
+
     val program = for {
 
       signalManager <- Stream.eval(KafkaNotification[String, EventSignal](kafkaConfig))
@@ -57,26 +57,37 @@ object FS2SignalScript extends IOApp {
          graph  <- Stream.eval(FlowGraph("example-1", "Run jobs with signal")(wf))
          _ <- Stream.eval(scheduler.push(graph))
          _ <- Stream.eval(signalManager.newTopic(graph.workflowId))
-      //   _ <- Stream.sleep(4.seconds) ++ signalManager.pushOne(graph.workflowId, SigKillJob("step-one-bis")).map(_ => ())
       } yield graph
 
-      createGraph = Stream.awakeEvery[IO](5.seconds).flatMap(_ => newGraph)
+      createGraph = newGraph.repeat.take(6)
+      queue <- Stream.eval(fs2.concurrent.Queue.bounded[IO, String](6)).covary[IO]
+      _ <- createGraph.map(_.workflowId).through(queue.enqueue)
+
+      /*
+       Remove Topic in Signal Manager after ending computation workflow
+       */
+
+
       res <- Stream(
-        scheduler.run,
-        createGraph
-      ).parJoinUnbounded
+        scheduler.run(2),
+        createGraph.drain,
+        signalManager.consumeFromKafka,
+        Stream.awakeEvery[IO](3.seconds).evalMap(_ => queue.dequeue1).flatMap {
+          wfId =>
+            for {
+              _ <- Stream.eval(IO(println(s"Sending to ${wfId}")))
+              _ <- signalManager.pushOne(wfId, SigKillJob("step-one-bis"))
+              _ <- Stream.eval(IO(println("Done sending signal")))
+            } yield ()
+        }.drain
+      )
+        .parJoin(4)
+        .interruptAfter(20.seconds)
 
     } yield res
 
 
     program.compile.drain.unsafeRunSync()
-
-    /*
-        val ec = ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(2))
-    val cs = IO.contextShift(ec)
-    val timerKafka : Timer[IO] = IO.timer(ec)
-      */
-    //ec.shutdown()
 
     IO(ExitCode.Success)
   }

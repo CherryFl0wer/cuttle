@@ -90,6 +90,7 @@ class KafkaNotification[K, V](kafkaConfig : KafkaConfig, sharedState : Ref[IO, K
         .evalTap(_.subscribeTo(kafkaConfig.topic))
         .flatMap(_.stream)
         .map(Some(_))
+          .evalTap(m => IO(println(s"${m}")))
         .broadcastTo(pushMessageToTopics, commitOffsetPipe)
     } yield ()
 
@@ -98,22 +99,6 @@ class KafkaNotification[K, V](kafkaConfig : KafkaConfig, sharedState : Ref[IO, K
     * @param predicate filter the topic with messages corresponding
     * @return
     */
-  /*
-  def subscribeOn(predicate : ConsumerRecord[K,V] => Boolean): Stream[IO, CommittableMessage[IO, K, V]] = for {
-    msg <- topicEvents
-      .subscribe(nbOfSignalInQueue)
-      .collect { case Some(msg) => msg }
-      .filter(ev => predicate(ev.record))
-  } yield msg
-
-  def subscribeToKey(key : K) = for {
-    msg <- topicEvents
-      .subscribe(nbOfSignalInQueue)
-      .collect { case Some(msg) => msg }
-      .filter(m => m.record.key() == key )
-      .map(_.record.value())
-  } yield msg */
-
 
   def subscribeOnTopic(id : K): Stream[IO, (K, V)] = for {
     stateMapOfTopic <- Stream.eval(sharedState.get)
@@ -143,6 +128,12 @@ class KafkaNotification[K, V](kafkaConfig : KafkaConfig, sharedState : Ref[IO, K
     topic <- Topic[IO, KafkaNotification.Event[K,V]](None)
     state <- sharedState.tryUpdate(oldState => oldState + (id -> topic))
   } yield state
+
+  def removeTopic(id : K) : IO[Boolean] = for {
+    state <- sharedState.get
+    updatedState = state - id
+    st <- sharedState.tryUpdate(_ => updatedState)
+  } yield st
 
 
 }

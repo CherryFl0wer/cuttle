@@ -200,21 +200,20 @@ private[cuttle] object Database {
   private[cuttle] def reset(): Unit =
     connections.clear()
 
-  def connect(dbConfig: DatabaseConfig)(implicit logger: Logger): XA = {
-    // FIXME we shouldn't use allocated as it's unsafe instead we have to flatMap on the Resource[HikariTransactor]
-
-    val (hirakiTransactor, releaseIO) = newHikariTransactor(dbConfig).allocated.unsafeRunSync()
-
-    logger.debug("Allocated new Hikari transactor")
-    connections.getOrElseUpdate(
-      dbConfig, {
-        val xa = lockedTransactor(hirakiTransactor, releaseIO)
-        logger.debug("Lock transactor")
-        doSchemaUpdates.transact(xa).unsafeRunSync
-        logger.debug("Update Cuttle Schema")
-        xa
-      }
-    )
+  def connect(dbConfig: DatabaseConfig)(implicit logger: Logger): IO[XA] = {
+    newHikariTransactor(dbConfig).allocated.flatMap{ r =>
+      logger.debug("Allocated new Hikari transactor")
+      val ioXA = connections.getOrElseUpdate(
+        dbConfig, {
+          val xa = lockedTransactor(r._1, r._2)
+          logger.debug("Lock transactor")
+          doSchemaUpdates.transact(xa).unsafeRunSync
+          logger.debug("Update Cuttle Schema")
+          xa
+        }
+      )
+      IO(ioXA)
+    }
   }
 
 }

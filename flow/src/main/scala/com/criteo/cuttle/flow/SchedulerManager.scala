@@ -1,10 +1,13 @@
 package com.criteo.cuttle.flow
 
+import cats.effect.concurrent.Ref
 import cats.effect.{Concurrent, IO}
-import com.criteo.cuttle.{ExecutionPlatform, RetryStrategy, XA}
+import com.criteo.cuttle.flow.FlowSchedulerUtils.FlowJob
+import com.criteo.cuttle.{Completed, ExecutionPlatform, RetryStrategy, XA}
 import fs2.Stream
-import fs2.concurrent.Queue
+import fs2.concurrent.{Queue}
 
+import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 
 class SchedulerManager(workflowToRun : Queue[IO, SchedulerManager.QueueData], transactorQuery : XA) {
@@ -21,13 +24,13 @@ class SchedulerManager(workflowToRun : Queue[IO, SchedulerManager.QueueData], tr
   } yield ()
 
 
-  def run()(implicit C : Concurrent[IO]) =
+  def run(parallelRun : Int)(implicit C : Concurrent[IO]): Stream[IO, Unit] =
     workflowToRun
-      .dequeue
-      .map { case (project, platform, strategy, logs) =>
-        project.start(transactorQuery, platform, strategy, logs)
+      .dequeueChunk(parallelRun)
+      .parEvalMap(parallelRun) {
+        case (project, platform, strategy, logs) =>
+          project.start(transactorQuery, platform, strategy, logs).compile.drain
       }
-      .parJoin(5)
 }
 
 object SchedulerManager {
@@ -47,23 +50,12 @@ object SchedulerManager {
     * @return
     */
   def apply(maxWorkflow : Int, dbConfig : DatabaseConfig = DatabaseConfig.fromEnv)(implicit F : Concurrent[IO], logger : Logger) = {
-    val xa = CoreDB.connect(dbConfig)(logger)
-
     logger.info("Applying migrations to database")
-
     for {
-      _ <- Stream.eval(FlowDB.doSchemaUpdates.transact(xa))
+      xa <- Stream.eval(CoreDB.connect(dbConfig)(logger))
+      _  <- Stream.eval(FlowDB.doSchemaUpdates.transact(xa))
       _ = logger.info("Database up-to-date")
       queue <- Stream.eval(Queue.bounded[IO, QueueData](maxWorkflow))
     } yield new SchedulerManager(queue, xa)
   }
 }
-
-/*
-  sm <- SchedulerManager(100)
-
-  run <- Stream(
-    sm.run.parJoinUnbounded,
-    signalManager.consumerKafka.drain
-  )
-*/

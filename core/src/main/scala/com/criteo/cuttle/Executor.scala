@@ -779,6 +779,7 @@ class Executor[S <: Scheduling] private[cuttle] (
               case e: Throwable =>
                 e.printStackTrace()
             }
+
             if (execution.startTime.isDefined) {
               queries
                 .logExecution(
@@ -798,7 +799,7 @@ class Executor[S <: Scheduling] private[cuttle] (
     sealed trait NewExecution
     case object ToRunNow extends NewExecution
     case object DontRun extends NewExecution
-    case class Throttled(launchDate: Instant) extends NewExecution
+    case class  Throttled(launchDate: Instant) extends NewExecution
 
     val index: Map[(Job[S], S#Context), (Execution[S], Future[Completed])] = runningState.single.map {
       case (execution, future) => ((execution.job, execution.context), (execution, future))
@@ -916,7 +917,7 @@ class Executor[S <: Scheduling] private[cuttle] (
 
                       execution.onCancel { () =>
                         val cancelNow = atomic { implicit tx =>
-                          val failureKey = (execution.job -> execution.context)
+                          val failureKey = execution.job -> execution.context
                           recentFailures.get(failureKey).foreach {
                             case (_, failingJob) =>
                               recentFailures += (failureKey -> (None -> failingJob))
