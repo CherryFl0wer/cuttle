@@ -3,8 +3,9 @@ package com.criteo.cuttle.examples
 import cats.effect._
 import com.criteo.cuttle.flow.FlowSchedulerUtils.WFSignalBuilder
 import com.criteo.cuttle.{Finished, Job, Output}
-import com.criteo.cuttle.flow.{FlowGraph, FlowScheduling, SchedulerManager}
+import com.criteo.cuttle.flow.{FlowGraph, FlowScheduling, WorkflowsManager}
 import com.criteo.cuttle.flow.signals._
+import com.criteo.cuttle.flow.utils.{JobUtils, KafkaConfig, KafkaMessage}
 import io.circe.Json
 
 
@@ -24,17 +25,18 @@ object FS2SignalScript extends IOApp {
       val receive = for {
         value <- topic
           .subscribeOnTopic(e.context.workflowId)
+          .evalTap(ll => IO(println(s"Received a message for ${ll._1}")))
           .head
           .compile
           .toList
         _ <- IO(println(s"Received $value"))
       } yield {
-        Output(Json.obj("aud" -> "step is bis".asJson))
+        val o = Output(Json.obj("aud" -> "step is bis".asJson))
+        o
       }
-      //IO(Output(Json.obj("aud" -> "step is bis".asJson))).unsafeToFuture()
       receive.unsafeToFuture()
     }
-    val job2    = Job(s"step-two",     FlowScheduling(inputs = Json.obj("test" -> "final test".asJson))) { implicit e =>
+    val job2    = Job(s"step-two",  FlowScheduling(inputs = Json.obj("test" -> "final test".asJson))) { implicit e =>
       val in = e.job.scheduling.inputs
       val x = e.optic.aud.string.getOption(in).get + " passed to step three"
       IO(Output(x.asJson)).unsafeToFuture()
@@ -46,49 +48,40 @@ object FS2SignalScript extends IOApp {
 
     val kafkaConfig = KafkaConfig("cuttle_message", "cuttlemsg", List("localhost:9092"))
 
-    val program = for {
 
-      signalManager <- Stream.eval(KafkaNotification[String, EventSignal](kafkaConfig))
-      scheduler <- SchedulerManager(20)
+    /*
+    This testing program is used to run multiple workflow at the same time.
+    By setting up a workflow manager that take the length of the queue and a signalManager
+    */
+    val program = for {
+      signalManager <- Stream.eval(SignalManager[String, EventSignal](kafkaConfig))
+      scheduler     <- WorkflowsManager(20)(signalManager)
       workflowWithTopic = workflow1(signalManager)
 
-      newGraph = for {
-         wf <- Stream.emit(workflowWithTopic).covary[IO]
-         graph  <- Stream.eval(FlowGraph("example-1", "Run jobs with signal")(wf))
-         _ <- Stream.eval(scheduler.push(graph))
-         _ <- Stream.eval(signalManager.newTopic(graph.workflowId))
+      generateGraphs = for {
+         graph <- Stream(()).repeat.take(6).evalMap(_ => FlowGraph("example", "Run jobs with signal")(workflowWithTopic))
+         _     <- Stream.eval(scheduler.push(graph))
       } yield graph
 
-      createGraph = newGraph.repeat.take(6)
-      queue <- Stream.eval(fs2.concurrent.Queue.bounded[IO, String](6)).covary[IO]
-      _ <- createGraph.map(_.workflowId).through(queue.enqueue)
+      eagerList       <- Stream.eval(generateGraphs.compile.toList)
+      graphList        = Stream.emits(eagerList).covary[IO]
+      workflowListId   = Stream.emits(eagerList.map(g => g.workflowId)).covary[IO]
+      _ = logger.info("Running these workflow : ")
+      _ <- graphList.take(6).map(x => println(s"${x.workflowId} launching..."))
 
-      /*
-       Remove Topic in Signal Manager after ending computation workflow
-       */
-
+      //TODO: Tests with error edge
 
       res <- Stream(
-        scheduler.run(2),
-        createGraph.drain,
-        signalManager.consumeFromKafka,
-        Stream.awakeEvery[IO](3.seconds).evalMap(_ => queue.dequeue1).flatMap {
-          wfId =>
-            for {
-              _ <- Stream.eval(IO(println(s"Sending to ${wfId}")))
-              _ <- signalManager.pushOne(wfId, SigKillJob("step-one-bis"))
-              _ <- Stream.eval(IO(println("Done sending signal")))
-            } yield ()
-        }.drain
-      )
-        .parJoin(4)
-        .interruptAfter(20.seconds)
-
+         scheduler.run(2).drain,
+         signalManager.broadcastTopic,
+         graphList.drain,
+         Stream.awakeEvery[IO](1.second).zipRight(workflowListId.repeat).flatMap { g =>
+           signalManager.pushOne(g, SigKillJob("step-one-bis"))
+         }.drain
+      ).parJoinUnbounded
     } yield res
 
-
     program.compile.drain.unsafeRunSync()
-
     IO(ExitCode.Success)
   }
 }

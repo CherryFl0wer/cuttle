@@ -523,7 +523,7 @@ class Executor[S <: Scheduling] private[cuttle] (
     val waitings = platforms.flatMap(_.waiting).toSet
     executions.map { execution =>
       val status = if (execution.isWaiting.get || waitings.contains(execution)) ExecutionWaiting else ExecutionRunning
-      (execution -> status)
+      execution -> status
     }
   }
 
@@ -566,7 +566,7 @@ class Executor[S <: Scheduling] private[cuttle] (
       .map { executions =>
         if (asc) executions else executions.reverse
       }
-      .map(_.drop(offset).take(limit))
+      .map(_.slice(offset, offset + limit))
       .flatMap(_.map {
         case (execution, status) =>
           execution.toExecutionLog(status)
@@ -612,7 +612,7 @@ class Executor[S <: Scheduling] private[cuttle] (
       .map { executions =>
         if (asc) executions else executions.reverse
       }
-      .map(_.drop(offset).take(limit))
+      .map(_.slice(offset, offset + limit))
       .flatMap(_.map {
         case (execution, failingJob, executionStatus) =>
           execution.toExecutionLog(executionStatus).copy(failing = Some(failingJob))

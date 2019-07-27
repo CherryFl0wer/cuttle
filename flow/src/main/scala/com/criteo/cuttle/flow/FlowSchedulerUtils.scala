@@ -2,7 +2,7 @@ package com.criteo.cuttle.flow
 
 import java.time.ZoneId
 
-import com.criteo.cuttle.flow.signals.KafkaNotification
+import com.criteo.cuttle.flow.signals._
 import com.criteo.cuttle.{Completed, Job}
 
 import scala.concurrent.Future
@@ -10,7 +10,7 @@ import scala.concurrent.Future
 object FlowSchedulerUtils {
 
 
-  type WFSignalBuilder[K,V] = KafkaNotification[K,V] => FlowWorkflow
+  type WFSignalBuilder[K,V] = SignalManager[K,V] => FlowWorkflow
 
   type FlowJob = Job[FlowScheduling]
 

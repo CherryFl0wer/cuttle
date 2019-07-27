@@ -15,6 +15,8 @@ import cats.effect.concurrent.{Ref => CatsRef}
 import cats.effect.IO
 import cats.implicits._
 import com.criteo.cuttle.flow.utils.JobUtils
+
+import scala.collection.mutable
 import scala.collection.mutable.{LinkedHashSet, ListBuffer}
 
 
@@ -31,7 +33,9 @@ case class FlowScheduler(logger: Logger,
 
   private val queries = Queries(logger)
 
-  private val discardedJob = new LinkedHashSet[FlowJob]()
+  private val discardedJob = {
+    new mutable.LinkedHashSet[FlowJob]()
+  }
 
   private def currentJobsRunning(state : JobState) : Set[FlowJob] =
     state.filter { case (_, jobState) =>
@@ -128,7 +132,7 @@ case class FlowScheduler(logger: Logger,
   private[flow] def initialize(workflow : FlowWorkflow, xa : XA, logger : Logger) = {
 
     logger.info("Validate flow workflow before start")
-    import cats.data.{EitherT}
+    import cats.data.EitherT
     val validation = for {
       _ <- EitherT(IO.pure(FlowSchedulerUtils.validate(workflow).leftMap(x => new Throwable(x.mkString("\n")))))
       _ = logger.info("Flow Workflow is valid")
@@ -138,7 +142,6 @@ case class FlowScheduler(logger: Logger,
         case Some(jobstate) => refState.set(jobstate)
         case _ => IO.pure(())
       }).attempt)
-      _ = logger.info("OK go")
     } yield updateState
     validation
   }

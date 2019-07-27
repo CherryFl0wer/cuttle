@@ -3,7 +3,7 @@ package com.criteo.cuttle.flow
 import cats.effect.{ContextShift, IO, Timer}
 import com.criteo.cuttle.Utils.logger
 import com.criteo.cuttle.flow.FlowSchedulerUtils.WFSignalBuilder
-import com.criteo.cuttle.flow.signals.{KafkaConfig, KafkaNotification}
+import com.criteo.cuttle.flow.utils.KafkaConfig
 import com.criteo.cuttle.{Execution, Finished, ITTestScheduling, Job, Output}
 import fs2.Stream
 import io.circe.Json
@@ -73,7 +73,7 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
     val program = for {
       // Initialisation
-      signalManager   <- Stream.eval(KafkaNotification[String, String](KafkaConfig("signal_cuttle", "signals", List("localhost:9092"))))
+      signalManager   <- Stream.eval(KafkaMessage[String, String](KafkaConfig("signal_cuttle", "signals", List("localhost:9092"))))
       // Setup Workflow
       _ <- Stream(()).concurrently(signalManager.consumeFromKafka)
       workflowWithTopic = simpleWorkflow(signalManager)

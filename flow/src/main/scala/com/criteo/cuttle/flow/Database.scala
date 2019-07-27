@@ -193,9 +193,9 @@ private[flow] object Database {
     val h = workflow.hash.toString
     val serializedGraph = workflow.asJson
     for {
-      exist <- EitherT(sql"""SELECT exists(SELECT 1 FROM flow_graph WHERE id=${h})""".query[Boolean].option.attempt)
+      exist <- EitherT(sql"""SELECT exists(SELECT 1 FROM flow_graph WHERE id=$h)""".query[Boolean].option.attempt)
       _ <- if (exist.isEmpty || !exist.get)
-        EitherT(sql"""INSERT INTO flow_graph VALUES(${h}, ${serializedGraph})""".update.run.attempt)
+        EitherT(sql"""INSERT INTO flow_graph VALUES($h, $serializedGraph)""".update.run.attempt)
       else
         EitherT.rightT[doobie.ConnectionIO, Throwable](())
     } yield ()
