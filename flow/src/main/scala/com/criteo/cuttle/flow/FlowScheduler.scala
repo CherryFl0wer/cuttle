@@ -64,10 +64,9 @@ case class FlowScheduler(logger: Logger,
     }.keySet
 
   /**
-
-  @todo move code elsewhere
     Merge jsons together, if there is two key similar at the first level then create a map where
     the keys are nexts._1
+    * @todo move code elsewhere
     * @param initial initial json
     * @param nexts list of others json, tuple containing a string defining the name of the json and a Json attached to it
     * @return
@@ -100,6 +99,8 @@ case class FlowScheduler(logger: Logger,
 
               })
           }
+          case (None, Some(rhs)) => fromJsonObject(rhs)
+          case (Some(lhs), None) => fromJsonObject(lhs)
           case _ => accInit._2
         })
     }
@@ -205,10 +206,11 @@ case class FlowScheduler(logger: Logger,
     val jobs = jobsAllowedToRun(newWorkflow.roots)
 
     jobs.map { currentJob =>
-      val newInputs = formatKeyOnJson(mergeDuplicateJson(
+      val json = mergeDuplicateJson(
         (currentJob.id, currentJob.scheduling.inputs),
         workflow.parentsOf(currentJob).map(job => (job.id, job.scheduling.outputs)).toList
-      )._2, JobUtils.formatName)
+      )._2
+      val newInputs = formatKeyOnJson(json, JobUtils.formatName)
 
       val jobWithInput = currentJob.copy(scheduling = FlowScheduling(inputs = newInputs))(currentJob.effect)
       (jobWithInput, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId))
@@ -237,11 +239,16 @@ case class FlowScheduler(logger: Logger,
       updatedJob <- completed.flatMap {
         case (job, _, future) => future.value.get match { // Check jobs status and save into the db
           case status if status.isSuccess || stateMap.get(job).isDefined && stateMap(job) == Done =>
-            status.get match {
+            status.get match { // Set output of the current job
               case Output(res) =>
                 val jobWithOutput = job.copy(scheduling = FlowScheduling(inputs = job.scheduling.inputs, outputs = res))(job.effect)
                 jobToUpdateOutput.append(jobWithOutput)
                 Some(saveResult(workflow.hash, jobWithOutput, xa).map(_ => jobWithOutput -> Done))
+              case OutputErr(err) =>
+                val jobWithError = job.copy(scheduling = FlowScheduling(inputs = job.scheduling.inputs, outputs = err))(job.effect)
+                jobToUpdateOutput.append(jobWithError)
+                Some(saveResult(workflow.hash, jobWithError, xa).map(_ => jobWithError -> Failed))
+
               case _ => Some(saveResult(workflow.hash, job, xa).map(_ => job -> Done))
             }
           case _ => Some(saveResult(workflow.hash, job, xa).map(_ => job -> Failed))
@@ -266,7 +273,7 @@ case class FlowScheduler(logger: Logger,
           Database
            .serializeState(workflowdId, stateSnapshot, None).transact(xa).map(_ => statusJobs).attempt
         else
-          IO.pure(Either.right(statusJobs))
+          IO(Either.right(statusJobs))
     } yield newStatus
 
   }

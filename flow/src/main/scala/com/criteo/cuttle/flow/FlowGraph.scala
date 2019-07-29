@@ -33,15 +33,12 @@ class FlowGraph(val workflowId: String,
 
 
     val executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, version, logsRetention)(retryStrategy)
-
-    println(s"STARTING ==== > ${workflowId} < ==== STARTING")
     for {
       refState   <- Stream.eval(Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState]))
       scheduler  =  FlowScheduler(logger, workflowId, refState)
       serialize  <- Stream.eval(FlowDB.serializeGraph(jobs).value.transact(xa))
       stream <- serialize match {
         case Left(e) =>
-          println(e.getMessage)
           Stream(Left(e))
         case Right(_) =>
           logger.info(s"Start workflow $workflowId")
@@ -68,11 +65,8 @@ class FlowGraph(val workflowId: String,
     import doobie.implicits._
     import fs2.Stream
     import cats.effect.concurrent.Ref
-
-
     val executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, version, logsRetention)(retryStrategy)
 
-    println(s"STARTING ==== > ${workflowId} < ==== STARTING")
     for {
       refState   <- Stream.eval(Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState]))
       scheduler  =  FlowScheduler(logger, workflowId, refState)
@@ -81,7 +75,6 @@ class FlowGraph(val workflowId: String,
       _ <- Stream.eval(semaphore.release)
       stream <- serialize match {
         case Left(e) =>
-          println(e.getMessage)
           Stream(Left(e))
         case Right(_) =>
           logger.info(s"Start workflow $workflowId")

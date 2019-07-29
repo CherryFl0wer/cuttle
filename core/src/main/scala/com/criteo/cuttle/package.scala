@@ -29,8 +29,9 @@ package cuttle {
     */
   case object Finished extends Completed
 
-
   case class Output(res : Json) extends Completed
+
+  case class OutputErr(err : Json) extends  Completed
 
 }
 
