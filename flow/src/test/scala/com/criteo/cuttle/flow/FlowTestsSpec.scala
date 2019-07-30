@@ -298,7 +298,7 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
       job2Exec should have size 1 // One execution at the end
 
-      val (job, ctx, result) = job2Exec.head
+      val (_, _, result) = job2Exec.head
 
       result.isCompleted shouldBe true // Job has finished correctly
 

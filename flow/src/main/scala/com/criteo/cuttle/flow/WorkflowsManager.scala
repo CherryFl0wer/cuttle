@@ -62,10 +62,9 @@ object WorkflowsManager {
 
   /**
      Create a new scheduler manager
-    * @param maxWorkflow
-    * @param dbConfig
-    * @param F
-    * @param logger
+    * @param maxWorkflow max nb of workflow waiting to be run
+    * @param dbConfig Environment of database
+    * @param signalManager Used to send signal to a specific graph using the key of kafka as the workflow id
     * @return
     */
   def apply(maxWorkflow : Int, dbConfig : DatabaseConfig = DatabaseConfig.fromEnv)
