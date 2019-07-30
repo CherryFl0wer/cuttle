@@ -1,4 +1,4 @@
-package com.criteo.cuttle.flow.signals
+package com.criteo.cuttle.flow.utils
 
 import scala.concurrent.duration._
 
@@ -10,7 +10,7 @@ import scala.concurrent.duration._
 case class KafkaConfig(topic: String,
                        groupId: String,
                        servers: List[String],
-                       offsetInterval : (Int, FiniteDuration) = (500, 15.seconds)) {
+                       offsetInterval : (Int, FiniteDuration) = (500, 15 seconds)) {
 
   def serversToString = servers.mkString(",")
 }

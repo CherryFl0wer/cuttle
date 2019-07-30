@@ -523,7 +523,7 @@ class Executor[S <: Scheduling] private[cuttle] (
     val waitings = platforms.flatMap(_.waiting).toSet
     executions.map { execution =>
       val status = if (execution.isWaiting.get || waitings.contains(execution)) ExecutionWaiting else ExecutionRunning
-      (execution -> status)
+      execution -> status
     }
   }
 
@@ -566,7 +566,7 @@ class Executor[S <: Scheduling] private[cuttle] (
       .map { executions =>
         if (asc) executions else executions.reverse
       }
-      .map(_.drop(offset).take(limit))
+      .map(_.slice(offset, offset + limit))
       .flatMap(_.map {
         case (execution, status) =>
           execution.toExecutionLog(status)
@@ -612,7 +612,7 @@ class Executor[S <: Scheduling] private[cuttle] (
       .map { executions =>
         if (asc) executions else executions.reverse
       }
-      .map(_.drop(offset).take(limit))
+      .map(_.slice(offset, offset + limit))
       .flatMap(_.map {
         case (execution, failingJob, executionStatus) =>
           execution.toExecutionLog(executionStatus).copy(failing = Some(failingJob))
@@ -759,8 +759,8 @@ class Executor[S <: Scheduling] private[cuttle] (
                 // retain jobs in recent failures if last failure happened in [now - retryStrategy.retryWindow, now]
 
                 recentFailures.retain {
-                  case (_, (retryExecution, failingJob)) =>
-                    retryExecution.isDefined || (retryStrategy.isDefined && failingJob.isLastFailureAfter(Instant.now.minus(retryStrategy.get.retryWindow)))
+                  case (_, (retryExecution, jobFailing)) =>
+                    retryExecution.isDefined || (retryStrategy.isDefined && jobFailing.isLastFailureAfter(Instant.now.minus(retryStrategy.get.retryWindow)))
                 }
                 val failureKey = (execution.job, execution.context)
                 val failingJob = recentFailures.get(failureKey).map(_._2).getOrElse(FailingJob(Nil, None))
@@ -779,6 +779,7 @@ class Executor[S <: Scheduling] private[cuttle] (
               case e: Throwable =>
                 e.printStackTrace()
             }
+
             if (execution.startTime.isDefined) {
               queries
                 .logExecution(
@@ -798,7 +799,7 @@ class Executor[S <: Scheduling] private[cuttle] (
     sealed trait NewExecution
     case object ToRunNow extends NewExecution
     case object DontRun extends NewExecution
-    case class Throttled(launchDate: Instant) extends NewExecution
+    case class  Throttled(launchDate: Instant) extends NewExecution
 
     val index: Map[(Job[S], S#Context), (Execution[S], Future[Completed])] = runningState.single.map {
       case (execution, future) => ((execution.job, execution.context), (execution, future))
@@ -916,7 +917,7 @@ class Executor[S <: Scheduling] private[cuttle] (
 
                       execution.onCancel { () =>
                         val cancelNow = atomic { implicit tx =>
-                          val failureKey = (execution.job -> execution.context)
+                          val failureKey = execution.job -> execution.context
                           recentFailures.get(failureKey).foreach {
                             case (_, failingJob) =>
                               recentFailures += (failureKey -> (None -> failingJob))

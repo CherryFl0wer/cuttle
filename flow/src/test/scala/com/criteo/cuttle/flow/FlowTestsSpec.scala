@@ -10,6 +10,7 @@ import io.circe.Json
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.FiniteDuration
+import scala.util.Success
 
 /**
   * @summary Functionals tests of the sub-library of scheduling `Flow` placed in [[com.criteo.cuttle.flow._]]
@@ -24,36 +25,34 @@ import scala.concurrent.duration.FiniteDuration
 class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
 
-  implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
-  implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+  implicit val ctx = ExecutionContext.global
+  implicit val timer: Timer[IO] = IO.timer(ctx)
+  implicit val cs: ContextShift[IO] = IO.contextShift(ctx)
 
   val job: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job(s"job-${i.toString}", FlowScheduling())(completed))
 
 
-  val failedSideEffect: (Execution[_]) => Future[Nothing] = (_ : Execution[_]) => Future.failed(new Exception("Failed task"))
+  val failedSideEffect: Execution[_] => Future[Nothing] = (_ : Execution[_]) => Future.failed(new Exception("Failed task"))
   val failedJob: Vector[Job[FlowScheduling]] = Vector.tabulate(10)(i => Job(s"failed-${i.toString}", FlowScheduling())(failedSideEffect))
 
   def waitingJob(id: String = "0", time : FiniteDuration) : Job[FlowScheduling] = Job(s"job-waiting-${id}", FlowScheduling()) { implicit e =>
-    e.park(time).map(_ => Finished)(ExecutionContext.global)
+    e.park(time).map(_ => Finished)
   }
 
 
   test("it should validate empty workflow") {
     val workflow = FlowWorkflow.empty
-
     assert(FlowSchedulerUtils.validate(workflow).isRight, "workflow is not valid")
   }
 
   test("it should validate unit workflow") {
     val workflow = job(0)
-
     assert(FlowSchedulerUtils.validate(workflow).isRight, "workflow is not valid")
   }
 
 
   test("it should validate workflow without cycles") {
     val workflow = job(0) --> job(1) --> job(2)
-
     assert(FlowSchedulerUtils.validate(workflow).isRight, "workflow is not valid")
   }
 
@@ -138,8 +137,6 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
   test("it should execute in order the jobs correctly with waiting job (success only)") {
     val wf = (job(0) && waitingJob("0", 3.seconds)) --> job(1) --> job(2)
-    val project = FlowProject("test01", "Test of jobs execution")(wf)
-    val browse = project.start().compile.toList.unsafeRunSync
     val testingList = List(
       List("job-0", "job-waiting-0"),
       List("job-waiting-0"),
@@ -147,23 +144,29 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
       List("job-2")
     )
 
-    var x = 0
 
-    browse.slice(0, browse.length-1).foreach { runnedJobs =>
-      runnedJobs should be ('right)
-      val jobs = runnedJobs.right.get
-      jobs.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
-      x += 1
+    val program = for {
+      project <- FlowGraph("test01", "Test of jobs execution")(wf)
+      browse  <- project.start().compile.toList
+    } yield {
+
+      var x = 0
+      browse.slice(0, browse.length-1).foreach { ranJobs =>
+        ranJobs should be ('right)
+        val jobs = ranJobs.right.get
+        jobs.toList.map(_._1.id) should contain theSameElementsAs testingList(x)
+        x += 1
+      }
+
+      browse.last shouldBe Right(Set.empty)
     }
 
-    browse.last shouldBe Right(Set.empty)
+    program.unsafeRunSync()
   }
 
 
   test("it should execute sequential `and` (success only)") {
     val wf = job(0) --> (job(1) && job(2)) --> (job(3) && job(4))
-    val project = FlowProject("test02", "Test  of jobs execution")(wf)
-    val browse = project.start().compile.toList.unsafeRunSync
     val testingList = List(
       List("job-0"),
 
@@ -175,22 +178,27 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     )
 
 
-    var x = 0
+    val program = for {
+      project <- FlowGraph("test02", "Test of jobs execution")(wf)
+      browse  <- project.start().compile.toList
+    } yield {
 
-    browse.slice(0, browse.length-1).foreach { runnedJobs =>
-      runnedJobs should be ('right)
-      val jobs = runnedJobs.right.get
-      jobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
-      x += 1
+      var x = 0
+      browse.slice(0, browse.length-1).foreach { ranJobs =>
+        ranJobs should be ('right)
+        val jobs = ranJobs.right.get
+        jobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
+        x += 1
+      }
+
+      browse.last shouldBe Right(Set.empty)
     }
 
-    browse.last shouldBe Right(Set.empty)
+    program.unsafeRunSync()
   }
 
   test("it should execute in order with multiple waiting job (success only) ") {
     val wf = (job(0) && job(1) && waitingJob("0",3.seconds)) --> job(2) --> (job(3) && waitingJob("1", 5.seconds)) --> job(4) --> job(5)
-    val project = FlowProject("test03", "Test  of jobs execution")(wf)
-    val browse = project.start().compile.toList.unsafeRunSync
     val testingList = List(
       List("job-0", "job-1", "job-waiting-0"),
       List("job-0", "job-1", "job-waiting-0"),
@@ -202,15 +210,23 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
       List("job-5")
     )
 
-    var x = 0
+    val program = for {
+      project <- FlowGraph("test03", "Test of jobs execution")(wf)
+      browse  <- project.start().compile.toList
+    } yield {
 
-    browse.slice(0, browse.length-1).foreach { runnedJobs =>
-      runnedJobs should be ('right)
-      val jobs = runnedJobs.right.get
-      jobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
-      x += 1
+      var x = 0
+      browse.slice(0, browse.length-1).foreach { ranJobs =>
+        ranJobs should be ('right)
+        val jobs = ranJobs.right.get
+        jobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
+        x += 1
+      }
+
+      browse.last shouldBe Right(Set.empty)
     }
-    browse.last shouldBe Right(Set.empty)
+
+    program.unsafeRunSync()
   }
 
 
@@ -219,9 +235,6 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     val part1 = (job(0) && waitingJob(time = 3.seconds)) --> job(3)
     val part2 = job(2) --> job(4)
     val wf = (part1 && part2) --> job(5)
-
-    val project = FlowProject("test02", "Test  of jobs execution")(wf)
-    val browse = project.start().compile.toList.unsafeRunSync
 
     val testingList = List(
       List("job-0", "job-2", "job-waiting-0"),
@@ -232,46 +245,77 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
       List("job-5")
     )
 
-    var x = 0
+    val program = for {
+      project <- FlowGraph("test04", "Test of jobs execution")(wf)
+      browse  <- project.start().compile.toList
+    } yield {
 
-    browse.slice(0, browse.length-1).foreach { runnedJobs =>
-      runnedJobs should be ('right)
-      val jobs = runnedJobs.right.get
-      jobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
-      x += 1
+      var x = 0
+      browse.slice(0, browse.length-1).foreach { ranJobs =>
+        ranJobs should be ('right)
+        val jobs = ranJobs.right.get
+        jobs.toList.map(_._1.id) should contain atLeastOneElementOf testingList(x)
+        x += 1
+      }
+
+      browse.last shouldBe Right(Set.empty)
     }
 
-    browse.last shouldBe Right(Set.empty)
+    program.unsafeRunSync()
   }
 
 
-  test("it should ") {
+  test("it should check if output are fine at the end") {
     import io.circe.syntax._
 
     val job1 = Job(s"step-one", FlowScheduling(inputs = Json.obj("audience" -> "step is one".asJson))) { implicit e =>
-      val x = e.optic.audience.string.getOption(e.job.scheduling.inputs)  + " passed to step two"
-      Future.successful(Output(Json.obj("aud" -> x.asJson)))
+      val x = e.optic.audience.string.getOption(e.job.scheduling.inputs).get  + " will pass to step two"
+      Future.successful(Output(Json.obj("audience" -> x.asJson)))
     }
 
     val job1bis = Job(s"step-one-bis", FlowScheduling()) { implicit e =>
-      Future.successful(Output(Json.obj("aud" -> "albuquerque".asJson)))
+      Future.successful(Output(Json.obj("audience" -> "is just a bis audience".asJson)))
     }
 
-    val job2 = Job(s"step-two", FlowScheduling(inputs = Json.obj("pedo" -> "velo".asJson))) { implicit e =>
+    val job2 = Job(s"step-two", FlowScheduling(inputs = Json.obj("something-else" -> "anything".asJson))) { implicit e =>
       val in = e.job.scheduling.inputs
-      val y = e.optic.pedo.string.getOption(in)
-      val x = e.optic.aud.string.getOption(in)  + " passed to step three"
-      Future.successful(Output(x.asJson))
+      Future.successful(Output(in))
     }
 
     val wf = (job1 && job1bis) --> job2
 
-    val project = FlowProject("test03", "Test of jobs I/O")(wf)
-    val browse = project.start().compile.toList.unsafeRunSync
+    val program = for {
+      project <- FlowGraph("test05", "Test of jobs execution")(wf)
+      browse  <- project.start().compile.toList
+    } yield {
+      browse.length shouldBe browse.count(_.isRight) // Everything went fine
 
+      val sequenceOfJobs = browse.map(_.right.get)
+
+      sequenceOfJobs.last should have size 0
+
+      val job2Exec = sequenceOfJobs.dropRight(1).last
+
+      job2Exec should have size 1 // One execution at the end
+
+      val (_, _, result) = job2Exec.head
+
+      result.isCompleted shouldBe true // Job has finished correctly
+
+      val goodField = result.value.get match {
+        case Success(done) => done match {
+          case Output(json) =>
+            json.hcursor.downField("something_else").as[String].isRight &&
+              json.hcursor.downField("audience").downField("step_one").as[String].isRight
+          case _ => false
+        }
+        case _ => false
+      }
+
+      goodField shouldBe true
+    }
+
+
+    program.unsafeRunSync()
   }
-
-  //TODO Add tests on
-
-  //TODO Add a test fail on a success only workflow
 }

@@ -21,16 +21,27 @@ package cuttle {
   sealed trait Completed
 
   /**
-    * The object to use to successfully complete a job side effect.
+    * Object to use to successfully complete a job side effect.
     *
     * {{{
-    *   Future.successful(Completed)
+    *   Future.successful(Finished)
     * }}}
     */
   case object Finished extends Completed
 
-
+  /**
+    * Object to use to successfully complete a job side effect and dispatch json to
+    * children's node.
+    * @param res
+    */
   case class Output(res : Json) extends Completed
+
+  /**
+    * Object to use to fail a job's side effect and dispatch json to
+    * children's error node.
+    * @param err
+    */
+  case class OutputErr(err : Json) extends  Completed
 
 }
 
