@@ -21,7 +21,6 @@ package object flow {
     }
 
 
-
 /*  implicit def flowEncoder = new Encoder[FlowScheduling] {
     override def apply(a: FlowScheduling): Json = a.asJson
   }
@@ -56,12 +55,10 @@ package object flow {
     new Decoder[FlowWorkflow] {
       override def apply(c : HCursor): Decoder.Result[FlowWorkflow] = {
         val wf = FlowWorkflow.empty[FlowScheduling]
-
         for {
           jobs <- c.downField("jobs").as[List[JobApplicable[FlowScheduling]]]
           dependencies <- c.downField("dependencies").as[List[(String, String, RoutingKind.Routing)]]
           tags <- c.downField("tags").as[List[Tag]]
-
         } yield wf
       }
     }
@@ -70,11 +67,11 @@ package object flow {
 
 
   implicit val deserializerEventSignal: Deserializer[EventSignal] = Deserializer.instance[EventSignal] {
-    (topic, headers, bytes) =>
+    (_, _, bytes) =>
       import java.io.{ObjectInputStream, ByteArrayInputStream}
       val ois = new ObjectInputStream(new ByteArrayInputStream(bytes))
       val value = ois.readObject().asInstanceOf[EventSignal]
-      ois.close
+      ois.close()
       value
   }
 
@@ -83,7 +80,7 @@ package object flow {
     val stream: ByteArrayOutputStream = new ByteArrayOutputStream()
     val oos = new ObjectOutputStream(stream)
     oos.writeObject(eventSignal)
-    oos.close
+    oos.close()
     stream.toByteArray
   }
 }
