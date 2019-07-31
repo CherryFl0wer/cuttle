@@ -25,8 +25,8 @@ class WorkflowsManager(workflowToRun : Queue[IO, WorkflowsManager.QueueData],
     * @param logsRetention clean the execution logs older than the given duration
     * @return
     */
-  def push(graph : FlowGraph,
-           platforms: Seq[ExecutionPlatform] = FlowGraph.defaultPlatforms,
+  def push(graph : FlowCreator,
+           platforms: Seq[ExecutionPlatform] = FlowCreator.defaultPlatforms,
            retryStrategy: Option[RetryStrategy] = None,
            logsRetention: Option[Duration] = None): IO[Unit] = for {
     _ <- signalManager.newTopic(graph.workflowId)
@@ -58,7 +58,7 @@ object WorkflowsManager {
   import com.criteo.cuttle.{DatabaseConfig, Logger, Database => CoreDB}
   import doobie.implicits._
 
-  type QueueData = (FlowGraph, Seq[ExecutionPlatform], Option[RetryStrategy], Option[Duration])
+  type QueueData = (FlowCreator, Seq[ExecutionPlatform], Option[RetryStrategy], Option[Duration])
 
   /**
      Create a new scheduler manager

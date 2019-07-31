@@ -135,9 +135,10 @@ case class FlowScheduler(logger: Logger,
     logger.info("Validate flow workflow before start")
     import cats.data.EitherT
     val validation = for {
+      _ <- EitherT.right[Throwable](logger.info("Validate flow workflow before start"))
       _ <- EitherT(IO.pure(FlowSchedulerUtils.validate(workflow).leftMap(x => new Throwable(x.mkString("\n")))))
-      _ = logger.info("Flow Workflow is valid")
-      _ = logger.info("Update state")
+      _ <- EitherT.right[Throwable](logger.info("Flow Workflow is valid"))
+      _ <- EitherT.right[Throwable](logger.info("Update state"))
       maybeState <- EitherT(Database.deserializeState(workflowdId)(workflow.vertices).transact(xa).attempt)
       updateState <- EitherT((maybeState match {
         case Some(jobstate) => refState.set(jobstate)

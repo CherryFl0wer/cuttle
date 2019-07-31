@@ -146,7 +146,7 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
 
     val program = for {
-      project <- FlowGraph("test01", "Test of jobs execution")(wf)
+      project <- FlowCreator("test01", "Test of jobs execution")(wf)
       browse  <- project.start().compile.toList
     } yield {
 
@@ -179,7 +179,7 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
 
     val program = for {
-      project <- FlowGraph("test02", "Test of jobs execution")(wf)
+      project <- FlowCreator("test02", "Test of jobs execution")(wf)
       browse  <- project.start().compile.toList
     } yield {
 
@@ -211,7 +211,7 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     )
 
     val program = for {
-      project <- FlowGraph("test03", "Test of jobs execution")(wf)
+      project <- FlowCreator("test03", "Test of jobs execution")(wf)
       browse  <- project.start().compile.toList
     } yield {
 
@@ -246,7 +246,7 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     )
 
     val program = for {
-      project <- FlowGraph("test04", "Test of jobs execution")(wf)
+      project <- FlowCreator("test04", "Test of jobs execution")(wf)
       browse  <- project.start().compile.toList
     } yield {
 
@@ -285,7 +285,7 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     val wf = (job1 && job1bis) --> job2
 
     val program = for {
-      project <- FlowGraph("test05", "Test of jobs execution")(wf)
+      project <- FlowCreator("test05", "Test of jobs execution")(wf)
       browse  <- project.start().compile.toList
     } yield {
       browse.length shouldBe browse.count(_.isRight) // Everything went fine

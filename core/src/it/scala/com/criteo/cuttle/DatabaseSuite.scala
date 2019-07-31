@@ -8,13 +8,7 @@ import org.scalatest.{BeforeAndAfter, FunSuite}
 class DatabaseSuite extends FunSuite with BeforeAndAfter {
   val dbName = "cuttle_it_test"
 
-  implicit val logger: Logger = new Logger {
-    override def debug(message: => String): Unit = ()
-    override def info(message: => String): Unit = ()
-    override def warn(message: => String): Unit = ()
-    override def error(message: => String): Unit = ()
-    override def trace(message: => String): Unit = ()
-  }
+  implicit val logger: Logger = new Logger{}
 
   val queries: Queries = Queries(logger)
 

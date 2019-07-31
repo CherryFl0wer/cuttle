@@ -66,7 +66,7 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
       signalManager <- Stream.eval(SignalManager[String, String](kafkaCf))
       // Setup Workflow
       workflowWithTopic = simpleWorkflow(signalManager)
-      project <- Stream.eval(FlowGraph("test-signal-01", "Test of jobs signal")(workflowWithTopic))
+      project <- Stream.eval(FlowCreator("test-signal-01", "Test of jobs signal")(workflowWithTopic))
       _ <-  Stream.eval(signalManager.newTopic(project.workflowId))
       // Run it
       res <- project.start().concurrently(signalManager.broadcastTopic)

@@ -3,7 +3,7 @@ package com.criteo.cuttle.examples
 import cats.effect._
 import com.criteo.cuttle.flow.FlowSchedulerUtils.WFSignalBuilder
 import com.criteo.cuttle.{Finished, Job, Output, OutputErr}
-import com.criteo.cuttle.flow.{FlowGraph, FlowScheduling, WorkflowsManager}
+import com.criteo.cuttle.flow.{FlowCreator, FlowScheduling, WorkflowsManager}
 import com.criteo.cuttle.flow.signals._
 import com.criteo.cuttle.flow.utils.{ KafkaConfig }
 import io.circe.Json
@@ -57,13 +57,14 @@ object FS2SignalScript extends IOApp {
     This testing program is used to run multiple workflow at the same time.
     By setting up a workflow manager that take the length of the queue and a signalManager
     */
+    /*
     val program = for {
       signalManager <- Stream.eval(SignalManager[String, EventSignal](kafkaConfig))
       scheduler     <- WorkflowsManager(20)(signalManager)
       workflowWithTopic = workflow1(signalManager)
 
       generateGraphs = for {
-         graph <- Stream(()).repeat.take(6).evalMap(_ => FlowGraph("example", "Run jobs with signal")(workflowWithTopic))
+         graph <- Stream(()).repeat.take(6).evalMap(_ => FlowCreator("example", "Run jobs with signal")(workflowWithTopic))
          _     <- Stream.eval(scheduler.push(graph))
       } yield graph
 
@@ -83,7 +84,14 @@ object FS2SignalScript extends IOApp {
       ).parJoinUnbounded
     } yield res
 
-    program.compile.drain.unsafeRunSync()
+    program.compile.drain.unsafeRunSync() */
+    val program2 = for {
+      signalManager <- Stream.eval(SignalManager[String, EventSignal](kafkaConfig))
+      scheduler     <- WorkflowsManager(20)(signalManager)
+      workflowWithTopic = workflow1(signalManager)
+      graph <- Stream.eval(FlowCreator("Run jobs with signal")(workflowWithTopic))
+     // _ <- graph runJob("step-two", Json.Null, true) // name, input, merging ? or replacing
+    } yield ()
     IO(ExitCode.Success)
   }
 }

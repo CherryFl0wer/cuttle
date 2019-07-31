@@ -12,11 +12,10 @@ import com.criteo.cuttle.flow.{Database => FlowDB}
 
 import scala.concurrent.duration.Duration
 
-class FlowGraph(val workflowId: String,
-                val version: String,
-                val description: String,
-                val jobs: FlowWorkflow,
-                val logger: Logger) {
+class FlowCreator(val workflowId: String,
+                  val description: String,
+                  val jobs: FlowWorkflow,
+                  val logger: Logger) {
   /**
     Start the workflow and execute with the given environment.
     Create the transactor to the database, and update database.
@@ -27,7 +26,7 @@ class FlowGraph(val workflowId: String,
     * @param logsRetention If specified, automatically clean the execution logs older than the given duration. @unused
     */
   def start(dbConfig : DatabaseConfig = DatabaseConfig.fromEnv,
-            platforms: Seq[ExecutionPlatform] = FlowGraph.defaultPlatforms,
+            platforms: Seq[ExecutionPlatform] = FlowCreator.defaultPlatforms,
             retryStrategy: Option[RetryStrategy] = None,
             logsRetention: Option[Duration] = None) : fs2.Stream[IO, Either[Throwable, Set[FlowSchedulerUtils.RunJob]]] = {
 
@@ -37,7 +36,7 @@ class FlowGraph(val workflowId: String,
 
     for {
       xa <- Stream.eval(CoreDB.connect(dbConfig)(logger))
-      executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, version, logsRetention)(retryStrategy)
+      executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, "version", logsRetention)(retryStrategy)
       _  <- Stream.eval(FlowDB.doSchemaUpdates.transact(xa))
       _ = logger.info("Database up-to-date")
       refState   <- Stream.eval(Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState]))
@@ -45,11 +44,11 @@ class FlowGraph(val workflowId: String,
       serialize  <- Stream.eval(FlowDB.serializeGraph(jobs).value.transact(xa))
       stream <- serialize match {
         case Left(e) =>
-          logger.error(e.getMessage)
-          Stream(Left(e))
+          Stream.eval(logger.error(e.getMessage)).map(_ =>  Left(e))
         case Right(_) =>
-          logger.info(s"Start workflow $workflowId")
-          scheduler.startStream(jobs, executor, xa, logger)
+          Stream.eval(logger.info(s"Start workflow $workflowId")).flatMap { _ =>
+            scheduler.startStream(jobs, executor, xa, logger)
+          }
       }
     } yield stream
 
@@ -65,7 +64,7 @@ class FlowGraph(val workflowId: String,
     */
   def parStart(xa : XA,
                semaphore : Semaphore[IO],
-               platforms: Seq[ExecutionPlatform] = FlowGraph.defaultPlatforms,
+               platforms: Seq[ExecutionPlatform] = FlowCreator.defaultPlatforms,
                retryStrategy: Option[RetryStrategy] = None,
                logsRetention: Option[Duration] = None) :
   fs2.Stream[IO, Either[Throwable, Set[FlowSchedulerUtils.RunJob]]] = {
@@ -73,7 +72,7 @@ class FlowGraph(val workflowId: String,
     import doobie.implicits._
     import fs2.Stream
     import cats.effect.concurrent.Ref
-    val executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, version, logsRetention)(retryStrategy)
+    val executor = new Executor[FlowScheduling](platforms, xa, logger, workflowId, "version", logsRetention)(retryStrategy)
 
     for {
       refState   <- Stream.eval(Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState]))
@@ -83,18 +82,18 @@ class FlowGraph(val workflowId: String,
       _ <- Stream.eval(semaphore.release)
       stream <- serialize match {
         case Left(e) =>
-          logger.error(e.getMessage)
-          Stream(Left(e))
+          Stream.eval(logger.error(e.getMessage)).map(_ =>  Left(e))
         case Right(_) =>
-          logger.info(s"Start workflow $workflowId")
-          scheduler.startStream(jobs, executor, xa, logger)
+          Stream.eval(logger.info(s"Start workflow $workflowId")).flatMap { _ =>
+            scheduler.startStream(jobs, executor, xa, logger)
+          }
       }
     } yield stream
 
   }
 }
 
-object FlowGraph {
+object FlowCreator {
 
 
   def defaultPlatforms: Seq[ExecutionPlatform] = {
@@ -109,14 +108,13 @@ object FlowGraph {
 
   /**
     * Create a new graph scheduler to start.
-    * @param version The project version as displayed in the UI.
-    * @param description The project version as displayed in the UI.
+    * @param description The project description
     * @param jobs The workflow to run in this project.
     * @param logger The logger to use to log internal debug informations.
     */
-  def apply(version: String = "", description: String = "", workflowID : String = Instant.now() + "-" + UUID.randomUUID().toString)
+  def apply(description: String = "", workflowID : String = Instant.now() + "-" + UUID.randomUUID().toString)
            (jobs: FlowWorkflow)
            (implicit logger: Logger) =
-    IO(new FlowGraph(workflowID, version, description, jobs, logger))
+    IO(new FlowCreator(workflowID, description, jobs, logger))
 
 }

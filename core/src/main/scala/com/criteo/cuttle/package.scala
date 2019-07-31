@@ -72,7 +72,7 @@ package object cuttle {
     *
     * A failed future means a failed execution.
     */
-  type SideEffect[S <: Scheduling] = (Execution[S]) => Future[Completed]
+  type SideEffect[S <: Scheduling] = Execution[S] => Future[Completed]
 
   /**
     * Automatically provide a scala `scala.concurrent.ExecutionContext` for a given [[Execution]].
