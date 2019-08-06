@@ -93,22 +93,21 @@ private[flow] object Database {
     NoUpdate
   )
 
-  val doSchemaUpdates: ConnectionIO[Unit] = CriteoCoreUtils.updateSchema("flow", schema)
+  val doSchemaUpdates : ConnectionIO[Unit] = CriteoCoreUtils.updateSchema("flow", schema)
 
-
-  def insertResult(wfHash : String, wfId : String, stepId : String, inputs : Json, outputs : Json) =
+  def insertResult(wfHash : String, wfId : String, stepId : String, inputs : Json, outputs : Json): doobie.ConnectionIO[Int] =
     sql"""
           INSERT INTO flow_results (workflow_id, from_graph, step_id, inputs, outputs)
           VALUES(${wfId}, ${wfHash}, ${stepId}, ${inputs}, ${outputs})
       """.update.run
 
-  // TODO : Maybe return list or one response.
-  def retrieveResult(wfId : String, stepId : String) =
-    OptionT {
-      sql"""
-            SELECT result FROM flow_results WHERE workflow_id = ${wfId} AND step_id = ${stepId} ORDER BY date LIMIT 1
-    """.query[Json].option
-    }.value
+
+   def retrieveWorkflowResults(wfId : String): doobie.ConnectionIO[List[(String, Json)]] =
+     sql"""
+            SELECT step_id, outputs FROM flow_results WHERE workflow_id = ${wfId} ORDER BY date
+    """.query[(String, Json)].to[List]
+
+
 
   /**
     * Decode the state
@@ -145,28 +144,25 @@ private[flow] object Database {
     }.map(json => dbStateDecoder(json).get).value
   }
 
-  def serializeState(workflowid : String, state: JobState, retention: Option[Duration]): ConnectionIO[Int] = {
+  def serializeState(workflowid : String, state: JobState, retention: Option[Duration]) = {
 
     val now = Instant.now()
-    val cleanStateBefore = retention.map { duration =>
-      if (duration.toSeconds <= 0)
-        sys.error(s"State retention is badly configured: ${duration}")
-      else
-        now.minusSeconds(duration.toSeconds)
-    }
     val stateJson = dbStateEncoder(state)
 
-     for {
-      // Apply state retention if needed
-      _ <- cleanStateBefore
-        .map { t =>
-          sql"DELETE FROM flow_state where date < ${t}".update.run
-        }
-        .getOrElse(NoUpdate)
-      // Insert the latest state
-      x <- sql"INSERT INTO flow_state (workflow_id, state, date) VALUES (${workflowid}, ${stateJson}, ${now})".update.run
-    } yield x
+    val stateRetention = retention match {
+      case Some(t) => for {
+        instant <- EitherT.cond[ConnectionIO](t.toSeconds <= 0L, now.minusSeconds(t.toSeconds), "State retention is badly configured")
+        _ <- EitherT.rightT[ConnectionIO, String](sql"DELETE FROM flow_state where date < $instant".update.run)
+      } yield ()
+      case _ => EitherT.rightT[ConnectionIO, String](())
+    }
 
+    for {
+      // Apply state retention if needed
+       _ <- stateRetention
+      // Insert the latest state
+       _ <- EitherT.rightT[ConnectionIO, String](sql"INSERT INTO flow_state (workflow_id, state, date) VALUES ($workflowid, $stateJson, $now)".update.run)
+    } yield ()
   }
 
 

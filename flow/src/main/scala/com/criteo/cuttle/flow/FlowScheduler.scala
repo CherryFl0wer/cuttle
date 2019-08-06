@@ -2,6 +2,7 @@ package com.criteo.cuttle.flow
 
 import java.time.Instant
 
+import cats.data.EitherT
 import com.criteo.cuttle.ThreadPools.Implicits.sideEffectThreadPool
 import com.criteo.cuttle.ThreadPools._
 import com.criteo.cuttle._
@@ -16,7 +17,6 @@ import cats.effect.IO
 import cats.implicits._
 import com.criteo.cuttle.flow.utils.JobUtils
 
-import scala.collection.mutable
 import scala.collection.mutable.{LinkedHashSet, ListBuffer}
 
 
@@ -25,7 +25,7 @@ import scala.collection.mutable.{LinkedHashSet, ListBuffer}
 /** A [[FlowScheduler]] executes the [[com.criteo.cuttle.flow.FlowWorkflow Workflow]]
   */
 case class FlowScheduler(logger: Logger,
-                         workflowdId : String,
+                         workflowId : String,
                          refState : CatsRef[IO, JobState]) extends Scheduler[FlowScheduling] {
 
 
@@ -34,7 +34,7 @@ case class FlowScheduler(logger: Logger,
   private val queries = Queries(logger)
 
   private val discardedJob = {
-    new mutable.LinkedHashSet[FlowJob]()
+    new LinkedHashSet[FlowJob]()
   }
 
   private def currentJobsRunning(state : JobState) : Set[FlowJob] =
@@ -64,49 +64,6 @@ case class FlowScheduler(logger: Logger,
     }.keySet
 
   /**
-    Merge jsons together, if there is two key similar at the first level then create a map where
-    the keys are nexts._1
-    * @todo move code elsewhere
-    * @param initial initial json
-    * @param nexts list of others json, tuple containing a string defining the name of the json and a Json attached to it
-    * @return
-    */
-  private def mergeDuplicateJson(initial : (String, Json), nexts : List[(String, Json)]) = {
-    import io.circe.Json.fromJsonObject
-
-    val mergedKeys : ListBuffer[String] = ListBuffer.empty
-    nexts.fold(initial) {
-      case (accInit, (rightJsonName, rightJsonVal)) =>
-        (accInit._1,
-        (accInit._2.asObject, rightJsonVal.asObject) match {
-          case (Some(lhs), Some(rhs)) => {
-            fromJsonObject(rhs.toList.foldLeft(lhs) {
-              case (leftJson, (rkey, rvalue)) => // traversal over right json
-                lhs(rkey).fold(leftJson.add(rkey, rvalue)) { leftValJson => // If right key exist in left json
-                  if (mergedKeys.contains(rkey)) {
-                    leftJson.remove(rkey)
-                    val mapValue = leftValJson.asObject.get.toMap ++ Map(rightJsonName -> rvalue)
-                    leftJson.add(rkey, mapValue.asJson)
-                  } else {
-                    mergedKeys.append(rkey)
-                    leftJson.remove(rkey)
-                    leftJson.add(rkey, Json.obj(
-                      accInit._1 -> leftValJson,
-                      rightJsonName -> rvalue
-                    ))
-                  }
-                }
-
-              })
-          }
-          case (None, Some(rhs)) => fromJsonObject(rhs)
-          case (Some(lhs), None) => fromJsonObject(lhs)
-          case _ => accInit._2
-        })
-    }
-  }
-
-  /**
       Save job's result in the database.
     * @param wfHash workflow hash
     * @param job the job to save
@@ -115,7 +72,7 @@ case class FlowScheduler(logger: Logger,
     * */
   private def saveResult(wfHash : Int, job : FlowJob, xa : XA) = for {
       _ <- Database
-        .insertResult(wfHash.toString, workflowdId, job.id,  job.scheduling.inputs.asJson, job.scheduling.outputs)
+        .insertResult(wfHash.toString, workflowId, job.id,  job.scheduling.inputs.asJson, job.scheduling.outputs)
         .transact(xa) // Attempt in case of err
   } yield ()
 
@@ -139,12 +96,14 @@ case class FlowScheduler(logger: Logger,
       _ <- EitherT(IO.pure(FlowSchedulerUtils.validate(workflow).leftMap(x => new Throwable(x.mkString("\n")))))
       _ <- EitherT.right[Throwable](logger.info("Flow Workflow is valid"))
       _ <- EitherT.right[Throwable](logger.info("Update state"))
-      maybeState <- EitherT(Database.deserializeState(workflowdId)(workflow.vertices).transact(xa).attempt)
+      maybeState <- EitherT(Database.deserializeState(workflowId)(workflow.vertices).transact(xa).attempt)
       updateState <- EitherT((maybeState match {
         case Some(jobstate) => refState.set(jobstate)
         case _ => IO.pure(())
       }).attempt)
     } yield updateState
+
+
     validation
   }
 
@@ -207,14 +166,14 @@ case class FlowScheduler(logger: Logger,
     val jobs = jobsAllowedToRun(newWorkflow.roots)
 
     jobs.map { currentJob =>
-      val json = mergeDuplicateJson(
+      val json = FlowSchedulerUtils.mergeDuplicateJson(
         (currentJob.id, currentJob.scheduling.inputs),
         workflow.parentsOf(currentJob).map(job => (job.id, job.scheduling.outputs)).toList
       )._2
       val newInputs = formatKeyOnJson(json, JobUtils.formatName)
 
       val jobWithInput = currentJob.copy(scheduling = FlowScheduling(inputs = newInputs))(currentJob.effect)
-      (jobWithInput, FlowSchedulerContext(Instant.now, executor.projectVersion, workflowdId))
+      (jobWithInput, FlowSchedulerContext(Instant.now, workflowId))
     }.toSeq
   }
 
@@ -229,7 +188,7 @@ case class FlowScheduler(logger: Logger,
     * */
   private[flow] def runJobs(wf: CatsRef[IO, FlowWorkflow],
                             executor: Executor[FlowScheduling],
-                            xa : XA, running : Set[RunJob]) : IO[Either[Throwable, Set[RunJob]]] = {
+                            xa : XA, running : Set[RunJob]): IO[Either[Throwable, Set[RunJob]]] = {
 
     val (completed, stillRunning) = completion(running)
 
@@ -256,26 +215,30 @@ case class FlowScheduler(logger: Logger,
         }
       }.toList.traverse(identity)
 
-      _ <- wf.set(jobToUpdateOutput.toList.foldLeft(workflow)(FlowWorkflow.replace))
+      _ <- wf.set(jobToUpdateOutput.toList.foldLeft(workflow) { (acc, job) => FlowWorkflow.replace(acc, job) })
       updatedMapJob = updatedJob.toMap
 
       _ <- refState.update { st =>  st ++ updatedMapJob }
       stateSnapshot <- refState.get
       workflowUpdated <- wf.get
-      runningSeq = jobsToRun(workflowUpdated, executor, stateSnapshot)
+      runningSeq    = jobsToRun(workflowUpdated, executor, stateSnapshot)
       newExecutions = executor.runAll(runningSeq)
-
+      _ <- logger.debug(s"Executions of ${newExecutions.map(_._1.id)} in $workflowId")
       // Add execution to state
       execState = newExecutions.map { case (exec, _) => exec.job -> Running(exec.id) }.toMap
       _ <- refState.update(st => st ++ execState)
 
       statusJobs = stillRunning ++ newExecutions.map { case (exec, res) => (exec.job, exec.context, res) }
-      newStatus <- if(completed.nonEmpty || runningSeq.nonEmpty)
-          Database
-           .serializeState(workflowdId, stateSnapshot, None).transact(xa).map(_ => statusJobs).attempt
-        else
-          IO(Either.right(statusJobs))
-    } yield newStatus
+
+      jobStatus <- if (completed.nonEmpty || runningSeq.nonEmpty)
+        Database.serializeState(workflowId, stateSnapshot, None)
+        .leftMap(new Throwable(_))
+        .map(_ => statusJobs)
+        .value
+        .transact(xa)
+      else
+        EitherT.rightT[IO, Throwable](statusJobs).value
+    } yield jobStatus
 
   }
 
@@ -293,33 +256,30 @@ case class FlowScheduler(logger: Logger,
   def startStream(jobs: Workload[FlowScheduling],
                   executor: Executor[FlowScheduling],
                   xa: XA,
-                  logger: Logger): fs2.Stream[IO, Either[Throwable, Set[(FlowJob, FlowSchedulerContext, Future[Completed])]]] = {
+                  logger: Logger): fs2.Stream[IO, Either[Throwable, Set[RunJob]]] = {
 
     import fs2.Stream
     val workflow  = jobs.asInstanceOf[FlowWorkflow]
-    for {
-       _           <- Stream.eval(initialize(workflow, xa, logger).value)
+    val executeWorkflow = for {
+       init        <- Stream.eval(initialize(workflow, xa, logger).value)
        workflowRef <- Stream.eval(CatsRef.of[IO, FlowWorkflow](workflow))
-       runningJobs =  Stream.eval(runJobs(workflowRef, executor, xa, Set.empty)) // Init start the first jobs
-       results     <- runningJobs.through(trampoline(firstFinished(workflowRef, executor, xa),
+       // Init start the first jobs
+       runningJobs = Stream.eval(runJobs(workflowRef, executor, xa, Set.empty))
+       results     <- runningJobs.through(trampoline(asyncFirstDone(workflowRef, executor, xa),
            (jobs : Either[Throwable, Set[RunJob]]) => jobs.isLeft || jobs.toOption.get.isEmpty)
        )
     } yield results
+
+    executeWorkflow
   }
 
-
-  private def firstFinished(workflow : CatsRef[IO, FlowWorkflow], executor: Executor[FlowScheduling], xa: XA)
-                            (possiblyRunning : Either[Throwable, Set[RunJob]]) : IO[Either[Throwable, Set[RunJob]]] =
+  private def asyncFirstDone(workflow : CatsRef[IO, FlowWorkflow], executor: Executor[FlowScheduling], xa: XA)
+                            (possiblyRunning : Either[Throwable, Set[RunJob]]): IO[Either[Throwable, Set[RunJob]]] =
     possiblyRunning match {
       case Right(running) =>
-
-        IO.async[IO[Either[Throwable, Set[RunJob]]]] { callback =>
-          Future.firstCompletedOf(running.map { case (_, _, done) => done }).onComplete { _ =>
-            // We always callback with Right because Left is managed by error job in runJobs
-            callback(Right(runJobs(workflow, executor, xa, running)))
-          }
-        }.flatten
-
+        IO.fromFuture(IO(Future.firstCompletedOf(running.map { case (_, _, done) => done }))).flatMap { _ =>
+          runJobs(workflow, executor, xa, running)
+        }
       case Left(error) => IO(Left(error))
   }
 

@@ -34,8 +34,7 @@ class ExecutorSpec extends FunSuite with ITTestScheduling {
         .fromConnection[IO](connection, sideEffectThreadPool)
         .copy(strategy0 = doobie.util.transactor.Strategy.void),
       logger,
-      "project_name",
-      "test_version"
+      "project_name"
     )(Some(RetryStrategy.ExponentialBackoffRetryStrategy))
 
     testExecutor.updateFinishedExecutionCounters(buildExecutionForJob(fooJob), "success")
@@ -118,7 +117,6 @@ class ExecutorSpec extends FunSuite with ITTestScheduling {
       },
       platforms = Seq.empty,
       "project_name",
-      "test_version",
       List.empty
     )
 

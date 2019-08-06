@@ -117,6 +117,8 @@ private[cuttle] object Database {
     """.update.run
   )
 
+  private[cuttle] val doSchemaUpdates = utils.updateSchema("schema_evolutions", schemaEvolutions)
+
   private def lockedTransactor(xa: Transactor[IO], releaseIO: IO[Unit]): Transactor[IO] = {
     val guid = java.util.UUID.randomUUID.toString
 
@@ -170,8 +172,6 @@ private[cuttle] object Database {
     xa
   }
 
-  private[cuttle] val doSchemaUpdates = utils.updateSchema("schema_evolutions", schemaEvolutions)
-
   private val connections = collection.concurrent.TrieMap.empty[DatabaseConfig, XA]
 
   private[cuttle] def newHikariTransactor(dbConfig: DatabaseConfig): Resource[IO, HikariTransactor[IO]] = {
@@ -200,21 +200,14 @@ private[cuttle] object Database {
   private[cuttle] def reset(): Unit =
     connections.clear()
 
-  def connect(dbConfig: DatabaseConfig)(implicit logger: Logger): IO[XA] = {
-    newHikariTransactor(dbConfig).allocated.flatMap{ r =>
-      logger.debug("Allocated new Hikari transactor")
-      val ioXA = connections.getOrElseUpdate(
-        dbConfig, {
-          val xa = lockedTransactor(r._1, r._2)
-          logger.debug("Lock transactor")
-          doSchemaUpdates.transact(xa).unsafeRunSync
-          logger.debug("Update Cuttle Schema")
-          xa
-        }
-      )
-      IO(ioXA)
-    }
-  }
+  def connect(dbConfig :DatabaseConfig)(implicit logger : Logger) : IO[XA] = for {
+    hiraki <- newHikariTransactor(dbConfig).allocated
+    _ <- logger.debug("Allocated new Hiraki transactor")
+    xa = connections.getOrElseUpdate(dbConfig, lockedTransactor(hiraki._1, hiraki._2))
+    _ <- logger.debug("Update cuttle schema")
+    _ <- doSchemaUpdates.transact(xa)
+  } yield xa
+
 
 }
 

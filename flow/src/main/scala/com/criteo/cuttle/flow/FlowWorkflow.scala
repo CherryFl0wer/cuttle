@@ -1,5 +1,6 @@
 package com.criteo.cuttle.flow
 
+import cats.effect.IO
 import com.criteo.cuttle.{Scheduling, Workload}
 import com.criteo.cuttle.flow.FlowSchedulerUtils._
 import io.circe._
@@ -65,6 +66,11 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     .filter { case (current, _, route) => current == job && route == kind }
     .map { case (_, child, _) => child }
 
+  private[cuttle] def parentsFromRoute(job : FlowJob, kind: RoutingKind.Routing)  = edges
+    .filter { case (_, current, route) => current == job && route == kind }
+    .map { case (parent, _, _) => parent }
+
+
   private[cuttle] def childsOf(vertice : FlowJob) : Set[FlowJob] = {
     if (leaves.contains(vertice)) Set.empty
     else edges.filter { case (current, _, _) => current == vertice }.map { case (_, child, _) => child }
@@ -82,7 +88,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
   /**
     *  Return an hash based on the edges of the workflow using MurmurHash3 from std lib
     */
-    lazy val hash =  Math.abs(scala.util.hashing.MurmurHash3.arrayHash(edges.toArray))
+  lazy val hash =  Math.abs(scala.util.hashing.MurmurHash3.arrayHash(edges.toArray))
 
   /**
     * Compose a [[FlowWorkflow]] with another [[FlowWorkflow]] but without any
@@ -192,22 +198,26 @@ object FlowWorkflow {
   }
 
 
-  /** *
+  /**
     * Replace the job
     *
-    * @param wf
-    * @param jobs
-    * @return a new workflow without the `jobs`
+    * @param wf the initial workflow
+    * @param job the job to replace
+    * @return a new workflow with the new job instead
     */
   def replace(wf: FlowWorkflow, job: FlowJob): FlowWorkflow = {
 
+
+    val newEdgesFrom = wf.edges.filter(p => p._1.id == job.id).map(p => (job, p._2, p._3))
+    val newEdgesTo   = wf.edges.filter(p => p._2.id == job.id).map(p => (p._1, job, p._3))
+    val wfWithoutEdgeJob = wf.edges.filterNot(p => p._1.id == job.id || p._2.id == job.id)
+
     val newVertices = wf.vertices.filterNot(p => p.id == job.id) + job
-    val newEdgesFrom = wf.edges.filter(p => p._1 == job).map(p => (job, p._2, p._3))
-    val newEdgesTo = wf.edges.filter(p => p._2 == job).map(p => (p._1, job, p._3))
-    val wfWithoutEdgeJob = wf.edges.filterNot(p => p._1 == job || p._2 == job)
+    val newEdges =  wfWithoutEdgeJob ++ newEdgesFrom ++ newEdgesTo
     new FlowWorkflow {
       def vertices = newVertices
-      def edges = wfWithoutEdgeJob ++ newEdgesFrom ++ newEdgesTo
+      def edges = newEdges
+      override lazy val hash = wf.hash
     }
   }
 

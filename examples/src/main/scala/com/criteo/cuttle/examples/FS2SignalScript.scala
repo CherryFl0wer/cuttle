@@ -2,10 +2,10 @@ package com.criteo.cuttle.examples
 
 import cats.effect._
 import com.criteo.cuttle.flow.FlowSchedulerUtils.WFSignalBuilder
-import com.criteo.cuttle.{Finished, Job, Output, OutputErr}
+import com.criteo.cuttle.{DatabaseConfig, Finished, Job, Output, OutputErr}
 import com.criteo.cuttle.flow.{FlowCreator, FlowScheduling, WorkflowsManager}
 import com.criteo.cuttle.flow.signals._
-import com.criteo.cuttle.flow.utils.{ KafkaConfig }
+import com.criteo.cuttle.flow.utils.KafkaConfig
 import io.circe.Json
 
 
@@ -13,12 +13,11 @@ object FS2SignalScript extends IOApp {
 
   import io.circe.syntax._
   import fs2._
-  import scala.concurrent.duration._
 
   val workflow1 : WFSignalBuilder[String, EventSignal] = topic => {
     val job1    = Job(s"step-one",     FlowScheduling(inputs = Json.obj("audience" -> "step is one".asJson))) { implicit e =>
       val x = e.optic.audience.string.getOption(e.job.scheduling.inputs).get + " passed to step two"
-      IO(Finished).unsafeToFuture()
+      IO(Output(Json.obj("result" -> x.asJson))).unsafeToFuture()
     }
 
     val errJob = Job("error-job", FlowScheduling()) { implicit e =>
@@ -42,14 +41,16 @@ object FS2SignalScript extends IOApp {
       }
       receive.unsafeToFuture()
     }
+
     val job2    = Job(s"step-two",  FlowScheduling(inputs = Json.obj("test" -> "final test".asJson))) { implicit e =>
       val in = e.job.scheduling.inputs
-      val x = e.optic.aud.string.getOption(in).get + " passed to step three"
-      IO(Output(x.asJson)).unsafeToFuture()
+      val x = e.optic.result.string.getOption(in).get + " got it"
+      IO(Output(Json.obj("exploded" -> x.asJson))).unsafeToFuture()
     }
-    job1bis.error(errJob) --> job2
+    job1.error(errJob) --> job2
   }
 
+  import com.criteo.cuttle.{ Database => CoreDB }
   def run(args: List[String]): IO[ExitCode] = {
 
     val kafkaConfig = KafkaConfig("cuttle_message", "cuttlemsg", List("localhost:9092"))
@@ -85,13 +86,25 @@ object FS2SignalScript extends IOApp {
     } yield res
 
     program.compile.drain.unsafeRunSync() */
-    val program2 = for {
+
+    val programInitiate = for {
+      // Initialisation
+      xa <- Stream.eval(CoreDB.connect(DatabaseConfig.fromEnv)(logger))
       signalManager <- Stream.eval(SignalManager[String, EventSignal](kafkaConfig))
-      scheduler     <- WorkflowsManager(20)(signalManager)
+      scheduler     <- WorkflowsManager(xa, signalManager)()
       workflowWithTopic = workflow1(signalManager)
-      graph <- Stream.eval(FlowCreator("Run jobs with signal")(workflowWithTopic))
-     // _ <- graph runJob("step-two", Json.Null, true) // name, input, merging ? or replacing
-    } yield ()
+
+      // First run
+      graph  <- Stream.eval(FlowCreator(xa, "Run jobs with signal")(workflowWithTopic))
+      fstRes <- Stream.eval(scheduler.runOne(graph))
+
+      // Second run
+      //sndRes <- Stream.eval(scheduler.runSingleJob(graph, "step-two"))
+    } yield fstRes
+
+    val resultat = programInitiate.compile.toList.unsafeRunSync()
+
+
     IO(ExitCode.Success)
   }
 }

@@ -203,7 +203,6 @@ case class Execution[S <: Scheduling](
   streams: ExecutionStreams,
   platforms: Seq[ExecutionPlatform],
   projectName: String,
-  projectVersion: String,
   previousFailures: List[ExecutionLog],
   optic : io.circe.optics.JsonPath = io.circe.optics.JsonPath.root
 )(implicit val executionContext: SideEffectThreadPool) {
@@ -440,7 +439,6 @@ class Executor[S <: Scheduling] private[cuttle] (
   xa: XA,
   logger: Logger,
   val projectName: String,
-  val projectVersion: String,
   logsRetention: Option[ScalaDuration] = None)(implicit retryStrategy: Option[RetryStrategy])
     extends MetricProvider[S]  {
 
@@ -813,7 +811,7 @@ class Executor[S <: Scheduling] private[cuttle] (
         } else
           all.distinct.zipWithIndex.map {
             case ((job, context), i) =>
-              if (i > 1000 && i % 1000 == 0) logger.info(s"Submitted ${i}/${all.size} jobs")
+              if (i > 1000 && i % 1000 == 0) logger.info(s"Submitted $i/${all.size} jobs")
               val maybeAlreadyRunning: Option[(Execution[S], Future[Completed])] = index.get((job, context))
 
               lazy val maybeThrottled: Option[(Execution[S], Future[Completed])] =
@@ -834,17 +832,15 @@ class Executor[S <: Scheduling] private[cuttle] (
                   // wrap the execution context so that we can register the name of the thread of each
                   // runnable (and thus future) that will be run by the side effect.
                   val sideEffectExecutionContext = SideEffectThreadPool.wrap(runnable =>
-                    new Runnable {
-                      override def run(): Unit = {
-                        val tName = Thread.currentThread().getName
-                        Executor.threadNamesToStreams.put(tName, streams)
-                        try {
-                          runnable.run()
-                        } finally {
-                          Executor.threadNamesToStreams.remove(tName)
-                        }
+                    () => {
+                      val tName = Thread.currentThread().getName
+                      Executor.threadNamesToStreams.put(tName, streams)
+                      try {
+                        runnable.run()
+                      } finally {
+                        Executor.threadNamesToStreams.remove(tName)
                       }
-                  })(Implicits.sideEffectThreadPool)
+                    })(Implicits.sideEffectThreadPool)
 
                   val previousFailures = recentFailures
                     .get(job -> context).map(rf =>
@@ -858,7 +854,6 @@ class Executor[S <: Scheduling] private[cuttle] (
                     streams = streams,
                     platforms,
                     projectName,
-                    projectVersion,
                     previousFailures
                   )(sideEffectExecutionContext)
                   val promise = Promise[Completed]

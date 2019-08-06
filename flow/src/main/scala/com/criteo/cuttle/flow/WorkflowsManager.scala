@@ -1,82 +1,87 @@
 package com.criteo.cuttle.flow
 
-import cats.effect.concurrent.{Ref, Semaphore}
+import cats.effect.concurrent.Semaphore
 import cats.effect.{Concurrent, IO}
-import com.criteo.cuttle
-import com.criteo.cuttle.flow.FlowSchedulerUtils.FlowJob
+import com.criteo.cuttle.flow.FlowSchedulerUtils.{FlowJob, RunJob}
 import com.criteo.cuttle.flow.signals.SignalManager
-import com.criteo.cuttle.{Completed, ExecutionPlatform, RetryStrategy, XA}
+import com.criteo.cuttle.flow.{Database => FlowDB}
+import com.criteo.cuttle.{Completed, XA}
 import fs2.Stream
-import fs2.concurrent.Queue
+import fs2.concurrent.{Queue, SignallingRef}
 
 import scala.concurrent.Future
-import scala.concurrent.duration.Duration
 
-class WorkflowsManager(workflowToRun : Queue[IO, WorkflowsManager.QueueData],
+class WorkflowsManager(workflowToRun : Queue[IO, FlowCreator],
+                       semaphore: Semaphore[IO],
                        transactorQuery : XA,
-                       signalManager : SignalManager[String, _])(semaphore: Semaphore[IO]) {
+                       signalManager : SignalManager[String, _])(implicit F : Concurrent[IO]) {
 
 
   /**
-    * Add a graph to the workflow manager and create a new topic inside the signal manager
+    * Add a graph to the workflow manager
     * @param graph The graph
-    * @param platforms The configured [[ExecutionPlatform ExecutionPlatforms]] to use to execute jobs.
-    * @param retryStrategy strategy to use for execution retry
-    * @param logsRetention clean the execution logs older than the given duration
     * @return
     */
-  def push(graph : FlowCreator,
-           platforms: Seq[ExecutionPlatform] = FlowCreator.defaultPlatforms,
-           retryStrategy: Option[RetryStrategy] = None,
-           logsRetention: Option[Duration] = None): IO[Unit] = for {
-    _ <- signalManager.newTopic(graph.workflowId)
-    _ <- workflowToRun.enqueue1((graph, platforms, retryStrategy, logsRetention))
-  } yield ()
+  def push(graph : FlowCreator): IO[Unit] = workflowToRun.enqueue1(graph)
 
-  def run(parallelRun : Int)(implicit C : Concurrent[IO]):
-  Stream[IO, List[Either[Throwable, Set[(FlowJob, FlowSchedulerContext, Future[Completed])]]]] =
+  /**
+    * Dequeue the Workflow in the internal queue and run them in parallel.
+    * @param parallelRun Number of workflow runned at the same time
+    * @param C
+    * @return
+    */
+  def parRun(parallelRun : Int): Stream[IO, List[Either[Throwable, Set[RunJob]]]] =
     workflowToRun
       .dequeue
-      .parEvalMap(parallelRun) {
-        case (project, platform, strategy, logs) =>
-          project
-              .parStart(transactorQuery, semaphore, platform, strategy, logs)
-              .compile
-              .toList
-              .flatMap(
-                lst => signalManager
-                  .removeTopic(project.workflowId)
-                  .map(_ => lst)
-              )
+      .mapAsync(parallelRun) {
+        graph =>
+          for {
+            _ <- signalManager.newTopic(graph.workflowId)
+            executionLog <- graph.parStart(semaphore).compile.toList
+            _ <- signalManager.removeTopic(graph.workflowId)
+          } yield executionLog
       }
 
+  /**
+    * Run a single workflow
+    * @param graph a Workflow ready to be run
+    * @param C
+    * @return
+    */
+  def runOne(graph : FlowCreator) =
+    for {
+      _ <- signalManager.newTopic(graph.workflowId)
+      executionLog <- graph.parStart(semaphore).compile.toList
+      _ <- signalManager.removeTopic(graph.workflowId)
+    } yield executionLog
+
+
+  /*
+  def runSingleJob(graph : FlowCreator, jobId: String, input : Option[Json] = None) =  for {
+    _ <- signalManager.newTopic(graph.workflowId)
+    executionLog <- graph.parStart(semaphore).compile.toList
+    _ <- signalManager.removeTopic(graph.workflowId)
+  } yield executionLog*/
 }
 
 object WorkflowsManager {
 
-  import com.criteo.cuttle.flow.{Database => FlowDB}
-  import com.criteo.cuttle.{DatabaseConfig, Logger, Database => CoreDB}
-  import doobie.implicits._
-
-  type QueueData = (FlowCreator, Seq[ExecutionPlatform], Option[RetryStrategy], Option[Duration])
+  import com.criteo.cuttle.Logger
 
   /**
      Create a new scheduler manager
     * @param maxWorkflow max nb of workflow waiting to be run
-    * @param dbConfig Environment of database
-    * @param signalManager Used to send signal to a specific graph using the key of kafka as the workflow id
+    * @param xa XA
+    * @param signalManager Used to send signal to a specific group of workflow using the key of kafka as the workflow id
     * @return
     */
-  def apply(maxWorkflow : Int, dbConfig : DatabaseConfig = DatabaseConfig.fromEnv)
-           (signalManager : SignalManager[String, _])
-           (implicit F : Concurrent[IO], logger : Logger) = {
-    logger.info("Applying migrations to database")
+  def apply(xa : XA, signalManager : SignalManager[String, _])(maxWorkflow : Int = 20)
+           (implicit F : Concurrent[IO], logger : Logger): Stream[IO, WorkflowsManager] = {
+    import doobie.implicits._
     for {
-      xa <- Stream.eval(CoreDB.connect(dbConfig)(logger))
-      _  <- Stream.eval(FlowDB.doSchemaUpdates.transact(xa))
-      _ = logger.info("Database up-to-date")
-      sem <- Stream.eval(Semaphore[IO](1))
-      queue <- Stream.eval(Queue.bounded[IO, QueueData](maxWorkflow))
-    } yield new WorkflowsManager(queue, xa, signalManager)(sem)
+      _ <- Stream.eval(FlowDB.doSchemaUpdates.transact(xa))
+      sem   <- Stream.eval(Semaphore[IO](1))
+      queue <- Stream.eval(Queue.bounded[IO, FlowCreator](maxWorkflow))
+    } yield new WorkflowsManager(queue, sem, xa, signalManager)
   }
 }
