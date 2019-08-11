@@ -52,11 +52,12 @@ class KafkaMessage[K, V](kafkaConfig : KafkaConfig)
       consumer     <- consumerStream[IO].using(consumerSettings)(csKafka, timer)
         .evalTap(_.subscribeTo(kafkaConfig.topic))
         .flatMap(_.stream)
+          .evalTap(m => IO(println(s"${m.record.key()} has been capted")))
         .map(Some(_))
     } yield consumer
 
 
-  /***
+  /**
     pushOne data to the topic kafka
     * @param key Key in topics
     * @param value Value in topics
@@ -64,8 +65,8 @@ class KafkaMessage[K, V](kafkaConfig : KafkaConfig)
     */
   def pushOne(key : K, value : V): Stream[IO, ProducerResult[Id, K, V, Unit]] = for {
     producer <- producerStream[IO].using(producerSettings)
-    record = ProducerRecord(kafkaConfig.topic, key, value)
-    msg    = ProducerMessage.one(record)
+    record   = ProducerRecord(kafkaConfig.topic, key, value)
+    msg      = ProducerMessage.one(record)
     result <- Stream.eval(producer.produce(msg).flatten)
   } yield result
 

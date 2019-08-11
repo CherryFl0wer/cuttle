@@ -144,24 +144,24 @@ private[flow] object Database {
     }.map(json => dbStateDecoder(json).get).value
   }
 
-  def serializeState(workflowid : String, state: JobState, retention: Option[Duration]) = {
+  def serializeState(workflowId : String, state: JobState, retention: Option[Duration]) = {
 
     val now = Instant.now()
     val stateJson = dbStateEncoder(state)
 
     val stateRetention = retention match {
       case Some(t) => for {
-        instant <- EitherT.cond[ConnectionIO](t.toSeconds <= 0L, now.minusSeconds(t.toSeconds), "State retention is badly configured")
-        _ <- EitherT.rightT[ConnectionIO, String](sql"DELETE FROM flow_state where date < $instant".update.run)
+        instant <- EitherT.cond[ConnectionIO](t.toSeconds <= 0L, now.minusSeconds(t.toSeconds), new Throwable("State retention is badly configured"))
+        _       <- EitherT(sql"DELETE FROM flow_state where date < $instant".update.run.attempt)
       } yield ()
-      case _ => EitherT.rightT[ConnectionIO, String](())
+      case _ => EitherT.rightT[ConnectionIO, Throwable](())
     }
 
     for {
       // Apply state retention if needed
        _ <- stateRetention
       // Insert the latest state
-       _ <- EitherT.rightT[ConnectionIO, String](sql"INSERT INTO flow_state (workflow_id, state, date) VALUES ($workflowid, $stateJson, $now)".update.run)
+       _ <- EitherT(sql"INSERT INTO flow_state (workflow_id, state, date) VALUES ($workflowId, $stateJson, $now)".update.run.attempt)
     } yield ()
   }
 
@@ -185,7 +185,7 @@ private[flow] object Database {
     * @param workflow
     * @return the hash of the workflow
     */
-  def serializeGraph(workflow: FlowWorkflow) = {
+  def serializeGraph(workflow: FlowWorkflow): EitherT[doobie.ConnectionIO, Throwable, Unit] = {
     val h = workflow.hash.toString
     val serializedGraph = workflow.asJson
     for {

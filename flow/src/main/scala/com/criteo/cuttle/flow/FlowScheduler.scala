@@ -17,6 +17,7 @@ import cats.effect.IO
 import cats.implicits._
 import com.criteo.cuttle.flow.utils.JobUtils
 
+import scala.annotation.tailrec
 import scala.collection.mutable.{LinkedHashSet, ListBuffer}
 
 
@@ -98,35 +99,13 @@ case class FlowScheduler(logger: Logger,
       _ <- EitherT.right[Throwable](logger.info("Update state"))
       maybeState <- EitherT(Database.deserializeState(workflowId)(workflow.vertices).transact(xa).attempt)
       updateState <- EitherT((maybeState match {
-        case Some(jobstate) => refState.set(jobstate)
+        case Some(jobsState) => refState.set(jobsState)
         case _ => IO.pure(())
       }).attempt)
     } yield updateState
 
 
     validation
-  }
-
-
-  /**
-    @todo move code elsewhere
-     Format every key of the given json by using the formatFunc.
-    * @param json The json to format
-    * @param formatFunc The function to transform the key
-    * @return the new json
-    */
-  private def formatKeyOnJson(json : Json, formatFunc : String => String) : Json = {
-    @scala.annotation.tailrec
-    def format(jsonAcc : JsonObject, jsonContent : List[(String, Json)]) : Json = {
-      jsonContent match {
-        case (key, value) :: tail =>
-          if (value.isObject) {
-             format(jsonAcc.add(formatFunc(key), formatKeyOnJson(value, formatFunc)), tail)
-          } else format(jsonAcc.add(formatFunc(key), value), tail)
-        case  Nil => Json.fromJsonObject(jsonAcc)
-      }
-    }
-    json.asObject.fold(Json.Null)(jsObj => format(JsonObject.empty, jsObj.toList))
   }
 
 
@@ -170,7 +149,7 @@ case class FlowScheduler(logger: Logger,
         (currentJob.id, currentJob.scheduling.inputs),
         workflow.parentsOf(currentJob).map(job => (job.id, job.scheduling.outputs)).toList
       )._2
-      val newInputs = formatKeyOnJson(json, JobUtils.formatName)
+      val newInputs = FlowSchedulerUtils.formatKeyOnJson(json, JobUtils.formatName)
 
       val jobWithInput = currentJob.copy(scheduling = FlowScheduling(inputs = newInputs))(currentJob.effect)
       (jobWithInput, FlowSchedulerContext(Instant.now, workflowId))
@@ -180,11 +159,11 @@ case class FlowScheduler(logger: Logger,
 
 
   /**
+    * Run the jobs and update state of the scheduler
     * @param wf Workflow used to get the next jobs to run
     * @param executor Execute the side effect of a job
     * @param xa doobie sql
     * @param running Set of current job running (can have completed jobs)
-    * @summary Run the jobs and update state of the scheduler
     * */
   private[flow] def runJobs(wf: CatsRef[IO, FlowWorkflow],
                             executor: Executor[FlowScheduling],
@@ -232,7 +211,6 @@ case class FlowScheduler(logger: Logger,
 
       jobStatus <- if (completed.nonEmpty || runningSeq.nonEmpty)
         Database.serializeState(workflowId, stateSnapshot, None)
-        .leftMap(new Throwable(_))
         .map(_ => statusJobs)
         .value
         .transact(xa)
@@ -243,45 +221,50 @@ case class FlowScheduler(logger: Logger,
   }
 
 
-  /***
+  /**
   Starts the scheduler for the given Workflow. Immediatly the scheduler will start interpreting
   the workflow and generate [[Execution Executions]] sent to the provided [[Executor]].
-
     * @param jobs The jobs to run in this case in a DAG representation
     * @param executor The executor to use to run the generated [[Execution Executions]].
     * @param xa The doobie transactor to use to persist the scheduler state if needed.
     * @param logger The logger to use to log internal debug state if needed.
     */
 
-  def startStream(jobs: Workload[FlowScheduling],
-                  executor: Executor[FlowScheduling],
-                  xa: XA,
-                  logger: Logger): fs2.Stream[IO, Either[Throwable, Set[RunJob]]] = {
 
-    import fs2.Stream
+  def executeWorkload(jobs: Workload[FlowScheduling],
+                      executor: Executor[FlowScheduling],
+                      xa: XA,
+                      logger: Logger): EitherT[IO, Throwable, (FlowWorkflow, JobState)] = {
+
     val workflow  = jobs.asInstanceOf[FlowWorkflow]
-    val executeWorkflow = for {
-       init        <- Stream.eval(initialize(workflow, xa, logger).value)
-       workflowRef <- Stream.eval(CatsRef.of[IO, FlowWorkflow](workflow))
-       // Init start the first jobs
-       runningJobs = Stream.eval(runJobs(workflowRef, executor, xa, Set.empty))
-       results     <- runningJobs.through(trampoline(asyncFirstDone(workflowRef, executor, xa),
-           (jobs : Either[Throwable, Set[RunJob]]) => jobs.isLeft || jobs.toOption.get.isEmpty)
-       )
-    } yield results
-
-    executeWorkflow
+    for {
+      _           <- initialize(workflow, xa, logger)
+      workflowRef <- EitherT.right[Throwable](CatsRef.of[IO, FlowWorkflow](workflow))
+      _  <- runWorkflow(workflowRef, executor, xa)(Set.empty)
+      state <- EitherT.right[Throwable](refState.get)
+      wf <- EitherT.right[Throwable](workflowRef.get)
+    } yield (wf, state)
   }
 
-  private def asyncFirstDone(workflow : CatsRef[IO, FlowWorkflow], executor: Executor[FlowScheduling], xa: XA)
-                            (possiblyRunning : Either[Throwable, Set[RunJob]]): IO[Either[Throwable, Set[RunJob]]] =
-    possiblyRunning match {
-      case Right(running) =>
-        IO.fromFuture(IO(Future.firstCompletedOf(running.map { case (_, _, done) => done }))).flatMap { _ =>
-          runJobs(workflow, executor, xa, running)
-        }
-      case Left(error) => IO(Left(error))
-  }
-
+  /**
+    * _
+    * @param workflow
+    * @param executor
+    * @param xa
+    * @param jobsStatus
+    * @return
+    */
+  private def runWorkflow(workflow : CatsRef[IO, FlowWorkflow], executor: Executor[FlowScheduling], xa: XA)
+                         (jobsStatus : Set[RunJob]) : EitherT[IO, Throwable, Unit]
+  = for {
+      jobs <- EitherT(runJobs(workflow, executor, xa, jobsStatus))
+      _ <-
+        EitherT.right[Throwable](if(jobs.isEmpty)
+              IO.pure(())
+            else
+              IO.fromFuture(IO(Future.firstCompletedOf(jobs.map { case (_, _, done) => done }))).flatMap { _ =>
+                runWorkflow(workflow, executor, xa)(jobs).value
+              })
+    } yield ()
 
 }

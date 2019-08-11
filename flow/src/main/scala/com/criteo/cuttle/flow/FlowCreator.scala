@@ -3,14 +3,12 @@ package com.criteo.cuttle.flow
 import java.time.Instant
 import java.util.UUID
 
-import cats.effect.IO
+import cats.effect.{Concurrent, IO}
 import cats.effect.concurrent.Semaphore
-import com.criteo.cuttle.flow.FlowSchedulerUtils.{FlowJob, JobState, RunJob}
-import com.criteo.cuttle.{Completed, ExecutionPlatform, Executor, Logger, XA, platforms}
+import com.criteo.cuttle.flow.FlowSchedulerUtils.{FlowJob, JobState}
+import com.criteo.cuttle.{ExecutionPlatform, Executor, Logger, XA, platforms}
 import com.criteo.cuttle.flow.{Database => FlowDB}
 import io.circe.Json
-
-import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 
 /**
@@ -29,32 +27,36 @@ class FlowCreator(xa : XA,
                   val description: String,
                   platforms: Seq[ExecutionPlatform],
                   val jobs: FlowWorkflow,
-                  logger: Logger) {
-
-
+                  logger: Logger)(implicit C: Concurrent[IO]) {
   import doobie.implicits._
-  import fs2.Stream
+  import fs2.concurrent.SignallingRef
   import cats.effect.concurrent.Ref
+
+  val workflowIsOver: IO[SignallingRef[IO, Boolean]] = SignallingRef[IO, Boolean](true)
+
 
   /**
     Start the workflow and execute with the given environment.
     Create the transactor to the database, and update database.
     This method is used when you want to run only one workflow at a time.
     */
-  def start: Stream[IO, Either[Throwable, Set[RunJob]]] =
+  def start: IO[Either[Throwable, (FlowWorkflow, JobState)]] =
     for {
-      refState <- Stream.eval(Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState]))
-      scheduler = FlowScheduler(logger, workflowId, refState)
-      serialize <- Stream.eval(FlowDB.serializeGraph(jobs).value.transact(xa))
-      stream <- serialize match {
+      sigOver <- workflowIsOver
+      _ <- sigOver.set(false)
+      refState   <- Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState])
+      scheduler  =  FlowScheduler(logger, workflowId, refState)
+      serialize  <- FlowDB.serializeGraph(jobs).value.transact(xa)
+      done <- serialize match {
         case Left(e) =>
-          Stream.eval(logger.error(e.getMessage)).map(_ => Left(e))
+          logger.error(e.getMessage).map(_ =>  Left(e))
         case Right(_) =>
-          Stream.eval(logger.info(s"Start workflow $workflowId")).flatMap { _ =>
-            scheduler.startStream(jobs, executor, xa, logger)
+          logger.info(s"Start workflow $workflowId").flatMap { _ =>
+            scheduler.executeWorkload(jobs, executor, xa, logger).value
           }
       }
-    } yield stream
+      _ <- sigOver.set(true)
+    } yield done
 
   /**
     Start scheduling the workflow in a parallel context where multiple workflow can be run at multiple times
@@ -62,24 +64,26 @@ class FlowCreator(xa : XA,
     * @param semaphore Semaphore to avoid serializing the first time the graph is seen
     *                  ex : If two workflow depends on the same FlowWorkflow and have never been executed before
     *                       then the serialization in parallel could try to insert the new FlowWorkflow two times
-    *                       Semaphore is used to block the serialization in parallel.
     */
-  def parStart(semaphore : Semaphore[IO]): Stream[IO, Either[Throwable, Set[RunJob]]] =
+  def parStart(semaphore : Semaphore[IO]): IO[Either[Throwable, (FlowWorkflow, JobState)]] =
     for {
-      refState   <- Stream.eval(Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState]))
+      sigOver <- workflowIsOver
+      _ <- sigOver.set(false)
+      refState   <- Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState])
       scheduler  =  FlowScheduler(logger, workflowId, refState)
-      _ <- Stream.eval(semaphore.acquire)
-      serialize  <- Stream.eval(FlowDB.serializeGraph(jobs).value.transact(xa))
-      _ <- Stream.eval(semaphore.release)
-      stream <- serialize match {
+      _ <- semaphore.acquire
+      serialize  <- FlowDB.serializeGraph(jobs).value.transact(xa)
+      _ <- semaphore.release
+      done <- serialize match {
         case Left(e) =>
-          Stream.eval(logger.error(e.getMessage)).map(_ =>  Left(e))
+          logger.error(e.getMessage).map(_ =>  Left(e))
         case Right(_) =>
-          Stream.eval(logger.info(s"Start workflow $workflowId")).flatMap { _ =>
-            scheduler.startStream(jobs, executor, xa, logger)
+          logger.info(s"Start workflow $workflowId").flatMap { _ =>
+            scheduler.executeWorkload(jobs, executor, xa, logger).value
           }
       }
-    } yield stream
+      _ <- sigOver.set(true)
+    } yield done
 
 
   /**
@@ -115,7 +119,10 @@ object FlowCreator {
 
   /**
     * Prepare the workflow to be started
+    * @param xa transactor SQL
     * @param description The project description
+    * @param workflowID id given to the workflow
+    * @param platforms define the resources that will be used by the executor
     * @param jobs The workflow to run in this project.
     * @param logger The logger to use to log internal debug informations.
     */
@@ -125,7 +132,7 @@ object FlowCreator {
             platforms: Seq[ExecutionPlatform] = defaultPlatforms,
             logsRetention : Option[Duration] = None)
            (jobs: FlowWorkflow)
-           (implicit logger: Logger) = for {
+           (implicit logger: Logger, C : Concurrent[IO]): IO[FlowCreator] = for {
     executor <- IO.pure(new Executor[FlowScheduling](platforms, xa, logger, workflowID, logsRetention)(None))
     flow     <- IO.pure(new FlowCreator(xa, executor, logsRetention, workflowID, description, platforms, jobs, logger))
   } yield flow

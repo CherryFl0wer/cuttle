@@ -1,9 +1,10 @@
 package com.criteo.cuttle.examples
 
+import cats.data.OptionT
 import cats.effect._
 import com.criteo.cuttle.flow.FlowSchedulerUtils.WFSignalBuilder
 import com.criteo.cuttle.{DatabaseConfig, Finished, Job, Output, OutputErr}
-import com.criteo.cuttle.flow.{FlowCreator, FlowScheduling, WorkflowsManager}
+import com.criteo.cuttle.flow.{FlowCreator, FlowScheduling, WorkflowManager}
 import com.criteo.cuttle.flow.signals._
 import com.criteo.cuttle.flow.utils.KafkaConfig
 import io.circe.Json
@@ -47,6 +48,7 @@ object FS2SignalScript extends IOApp {
       val x = e.optic.result.string.getOption(in).get + " got it"
       IO(Output(Json.obj("exploded" -> x.asJson))).unsafeToFuture()
     }
+
     job1.error(errJob) --> job2
   }
 
@@ -58,52 +60,23 @@ object FS2SignalScript extends IOApp {
     This testing program is used to run multiple workflow at the same time.
     By setting up a workflow manager that take the length of the queue and a signalManager
     */
-    /*
-    val program = for {
-      signalManager <- Stream.eval(SignalManager[String, EventSignal](kafkaConfig))
-      scheduler     <- WorkflowsManager(20)(signalManager)
-      workflowWithTopic = workflow1(signalManager)
-
-      generateGraphs = for {
-         graph <- Stream(()).repeat.take(6).evalMap(_ => FlowCreator("example", "Run jobs with signal")(workflowWithTopic))
-         _     <- Stream.eval(scheduler.push(graph))
-      } yield graph
-
-      eagerList       <- Stream.eval(generateGraphs.compile.toList)
-      graphList        = Stream.emits(eagerList).covary[IO]
-      workflowListId   = Stream.emits(eagerList.map(g => g.workflowId)).covary[IO]
-      _ = logger.info("Running these workflow : ")
-      _ <- graphList.take(6).map(x => println(s"${x.workflowId} launching..."))
-
-      res <- Stream(
-         scheduler.run(2).drain,
-         signalManager.broadcastTopic,
-         graphList.drain,
-         Stream.awakeEvery[IO](1.second).zipRight(workflowListId.repeat).flatMap { g =>
-           signalManager.pushOne(g, SigKillJob("step-one-bis"))
-         }.drain
-      ).parJoinUnbounded
-    } yield res
-
-    program.compile.drain.unsafeRunSync() */
-
+/*
     val programInitiate = for {
       // Initialisation
       xa <- Stream.eval(CoreDB.connect(DatabaseConfig.fromEnv)(logger))
       signalManager <- Stream.eval(SignalManager[String, EventSignal](kafkaConfig))
-      scheduler     <- WorkflowsManager(xa, signalManager)()
+      scheduler     <- WorkflowManager(xa, signalManager)()
       workflowWithTopic = workflow1(signalManager)
 
       // First run
       graph  <- Stream.eval(FlowCreator(xa, "Run jobs with signal")(workflowWithTopic))
       fstRes <- Stream.eval(scheduler.runOne(graph))
-
       // Second run
       //sndRes <- Stream.eval(scheduler.runSingleJob(graph, "step-two"))
     } yield fstRes
 
-    val resultat = programInitiate.compile.toList.unsafeRunSync()
-
+    val resultat = programInitiate.compile.lastOrError.unsafeRunSync()
+*/
 
     IO(ExitCode.Success)
   }

@@ -1,15 +1,19 @@
 package com.criteo.cuttle.flow
 
-import cats.effect.{ContextShift, IO, Timer}
-import com.criteo.cuttle.Utils.logger
-import com.criteo.cuttle.flow.FlowSchedulerUtils.WFSignalBuilder
-import com.criteo.cuttle.flow.signals.{EventSignal, SignalManager}
-import com.criteo.cuttle.flow.utils.{KafkaConfig, KafkaMessage}
-import com.criteo.cuttle.{Execution, Finished, ITTestScheduling, Job, Output}
+import java.util.concurrent.Executors
+
+import cats.effect.concurrent.Deferred
 import fs2.Stream
 import io.circe.Json
 import org.scalatest.Matchers
 import org.scalatest.FunSuite
+import cats.effect.{ContextShift, IO, Timer}
+import com.criteo.cuttle.Utils.logger
+import com.criteo.cuttle.flow._
+import com.criteo.cuttle.flow.FlowSchedulerUtils.WFSignalBuilder
+import com.criteo.cuttle.flow.signals._
+import com.criteo.cuttle.flow.utils._
+import com.criteo.cuttle.{DatabaseConfig, Finished, ITTestScheduling, Job, Output, Database => CoreDB}
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
@@ -30,19 +34,23 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
   implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
   implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
 
+  val xa = CoreDB.connect(DatabaseConfig.fromEnv)(logger)
+
   test("Signal sync") {
 
     val simpleWorkflow : WFSignalBuilder[String, String] = topic => {
 
-      val job1 =    Job(s"step-one", FlowScheduling(inputs = Json.obj("audience" -> "step is one".asJson))) { implicit e =>
+      lazy val job1 =    Job("step-one", FlowScheduling(inputs = Json.obj("audience" -> "step is one".asJson))) { implicit e =>
         IO(Finished).unsafeToFuture()
       }
 
-      val job1bis = Job(s"step-one-bis", FlowScheduling()) { implicit e =>
-        e.streams.info("On step bis")
+      lazy val job1bis = Job("step-one-bis", FlowScheduling()) { implicit execution =>
+        execution.streams.info("On step bis")
         val receive = for {
+          _ <- IO(println(s"Context of workflow ${execution.context.workflowId}"))
           value <- topic
-            .subscribeOnTopic(e.context.workflowId)
+            .subscribeOnTopic(execution.context.workflowId)
+            .evalTap(m => IO(println(s"received $m")))
             .head
             .compile
             .last
@@ -51,7 +59,7 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
         receive.unsafeToFuture()
       }
 
-      val job2 =    Job(s"step-two", FlowScheduling(inputs = Json.obj("test" -> "final test".asJson))) { implicit e =>
+      lazy val job2 = Job("step-two", FlowScheduling(inputs = Json.obj("test" -> "final test".asJson))) { implicit e =>
         val in = e.job.scheduling.inputs
         val x = e.optic.aud.string.getOption(in).get + " passed to step three"
         IO(Output(x.asJson)).unsafeToFuture()
@@ -61,26 +69,40 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     }
 
     val kafkaCf = KafkaConfig("signal_cuttle", "signals", List("localhost:9092"))
+
+    import cats.implicits._
+
     val program = for {
-      // Initialisation
-      signalManager <- Stream.eval(SignalManager[String, String](kafkaCf))
-      // Setup Workflow
+      tc            <- xa
+      stopping      <- Deferred[IO, Unit]
+      signalManager <- SignalManager[String, String](kafkaCf)
+      scheduler     <- WorkflowManager(tc, signalManager)(20)
       workflowWithTopic = simpleWorkflow(signalManager)
-      project <- Stream.eval(FlowCreator("test-signal-01", "Test of jobs signal")(workflowWithTopic))
-      _ <-  Stream.eval(signalManager.newTopic(project.workflowId))
-      // Run it
-      res <- project.start().concurrently(signalManager.broadcastTopic)
-       _  <- signalManager
-          .pushOne(project.workflowId, "a message")
-          .delayBy[IO](3.seconds)
-          .flatMap(_ => Stream.eval(signalManager.removeTopic(project.workflowId)))
 
-    } yield res
+      graph1 <- FlowCreator(tc, "Run jobs with signal")(workflowWithTopic)
+      graph2 <- FlowCreator(tc, "Run jobs with signal")(workflowWithTopic)
 
-    val programExecutions = program.compile.toList.unsafeRunSync()
-    programExecutions.length shouldBe 3 +- 4 // Depends on if it gets the result of both job1 and job1bis at the same time
+      fib1 <- scheduler.runOne(graph1).start
+      fib2 <- scheduler.runOne(graph2).start
 
+      runFlowAndStop = (fib1.join, fib2.join).parMapN { (wf1, wf2) =>
+        (wf1, wf2)
+      }.flatMap { res => stopping.complete(()).map(_ => res)}
 
+      wf12 <- (runFlowAndStop,
+            signalManager.broadcastTopic.take(2).interruptWhen(stopping.get.attempt).compile.drain,
+            signalManager.pushOne(graph2.workflowId, "step-one-bis").compile.drain,
+            signalManager.pushOne(graph1.workflowId, "step-one-bis").compile.drain)
+        .parMapN { (wf12, _, _, _) => wf12 }
+    } yield wf12
+
+    val wf12 = program.unsafeRunSync()
+    val (flow1, flow2) = wf12
+
+    flow1 should be ('right)
+    flow2 should be ('right)
+
+    assert(true)
   }
 
 }

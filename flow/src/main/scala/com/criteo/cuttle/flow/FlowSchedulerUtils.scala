@@ -4,7 +4,7 @@ import java.time.ZoneId
 
 import com.criteo.cuttle.flow.signals._
 import com.criteo.cuttle.{Completed, Job}
-import io.circe.Json
+import io.circe.{Json, JsonObject}
 
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.Future
@@ -34,6 +34,31 @@ object FlowSchedulerUtils {
     if (errors.nonEmpty) Left(errors.toList)
     else Right(())
   }
+
+
+
+  /**
+  Format every key of the given json by using the formatFunc.
+    * @param json The json to format
+    * @param formatFunc The function to transform the key
+    * @return the new json
+    */
+  def formatKeyOnJson(json : Json, formatFunc : String => String) : Json = {
+    @scala.annotation.tailrec
+    def format(jsonAcc : JsonObject, jsonContent : List[(String, Json)]) : Json = {
+      jsonContent match {
+        case (key, value) :: tail =>
+          if (value.isObject) {
+            format(jsonAcc.add(formatFunc(key), formatKeyOnJson(value, formatFunc)), tail)
+          } else format(jsonAcc.add(formatFunc(key), value), tail)
+        case  Nil => Json.fromJsonObject(jsonAcc)
+      }
+    }
+    json.asObject.fold(Json.Null)(jsObj => format(JsonObject.empty, jsObj.toList))
+  }
+
+
+
   /**
     Merge jsons together, if there is two key similar at the first level then create a map where
     the keys are nexts._1

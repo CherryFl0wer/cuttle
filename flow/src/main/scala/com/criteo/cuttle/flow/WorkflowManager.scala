@@ -1,20 +1,19 @@
 package com.criteo.cuttle.flow
 
 import cats.effect.concurrent.Semaphore
-import cats.effect.{Concurrent, IO}
-import com.criteo.cuttle.flow.FlowSchedulerUtils.{FlowJob, RunJob}
+import cats.effect.{Concurrent, ContextShift, IO}
 import com.criteo.cuttle.flow.signals.SignalManager
 import com.criteo.cuttle.flow.{Database => FlowDB}
-import com.criteo.cuttle.{Completed, XA}
+import com.criteo.cuttle.XA
+import com.criteo.cuttle.flow.FlowSchedulerUtils.JobState
 import fs2.Stream
-import fs2.concurrent.{Queue, SignallingRef}
+import fs2.concurrent.Queue
 
-import scala.concurrent.Future
 
-class WorkflowsManager(workflowToRun : Queue[IO, FlowCreator],
-                       semaphore: Semaphore[IO],
-                       transactorQuery : XA,
-                       signalManager : SignalManager[String, _])(implicit F : Concurrent[IO]) {
+class WorkflowManager(workflowToRun : Queue[IO, FlowCreator],
+                      semaphore: Semaphore[IO],
+                      transactorQuery : XA,
+                      signalManager : SignalManager[String, _])(implicit F : Concurrent[IO]) {
 
 
   /**
@@ -30,14 +29,14 @@ class WorkflowsManager(workflowToRun : Queue[IO, FlowCreator],
     * @param C
     * @return
     */
-  def parRun(parallelRun : Int): Stream[IO, List[Either[Throwable, Set[RunJob]]]] =
+  def parRun(parallelRun : Int): Stream[IO, Either[Throwable, (FlowWorkflow, JobState)]] =
     workflowToRun
       .dequeue
       .mapAsync(parallelRun) {
         graph =>
           for {
             _ <- signalManager.newTopic(graph.workflowId)
-            executionLog <- graph.parStart(semaphore).compile.toList
+            executionLog <- graph.parStart(semaphore)
             _ <- signalManager.removeTopic(graph.workflowId)
           } yield executionLog
       }
@@ -45,13 +44,13 @@ class WorkflowsManager(workflowToRun : Queue[IO, FlowCreator],
   /**
     * Run a single workflow
     * @param graph a Workflow ready to be run
-    * @param C
     * @return
     */
-  def runOne(graph : FlowCreator) =
+  def runOne(graph : FlowCreator): IO[Either[Throwable, (FlowWorkflow, JobState)]] =
     for {
+      _ <- IO(println(s"Adding ${graph.workflowId}"))
       _ <- signalManager.newTopic(graph.workflowId)
-      executionLog <- graph.parStart(semaphore).compile.toList
+      executionLog <- graph.parStart(semaphore)
       _ <- signalManager.removeTopic(graph.workflowId)
     } yield executionLog
 
@@ -64,7 +63,7 @@ class WorkflowsManager(workflowToRun : Queue[IO, FlowCreator],
   } yield executionLog*/
 }
 
-object WorkflowsManager {
+object WorkflowManager {
 
   import com.criteo.cuttle.Logger
 
@@ -76,12 +75,12 @@ object WorkflowsManager {
     * @return
     */
   def apply(xa : XA, signalManager : SignalManager[String, _])(maxWorkflow : Int = 20)
-           (implicit F : Concurrent[IO], logger : Logger): Stream[IO, WorkflowsManager] = {
+           (implicit F : Concurrent[IO], logger : Logger): IO[WorkflowManager] = {
     import doobie.implicits._
     for {
-      _ <- Stream.eval(FlowDB.doSchemaUpdates.transact(xa))
-      sem   <- Stream.eval(Semaphore[IO](1))
-      queue <- Stream.eval(Queue.bounded[IO, FlowCreator](maxWorkflow))
-    } yield new WorkflowsManager(queue, sem, xa, signalManager)
+      _     <- FlowDB.doSchemaUpdates.transact(xa)
+      sem   <- Semaphore[IO](1)
+      queue <- Queue.bounded[IO, FlowCreator](maxWorkflow)
+    } yield new WorkflowManager(queue, sem, xa, signalManager)
   }
 }

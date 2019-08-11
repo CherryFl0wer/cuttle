@@ -34,6 +34,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     vertices.filter(!nodes.contains(_))
   }
 
+
   // Returns a list of jobs in the workflow sorted topologically, using Kahn's algorithm. At the
   // same time checks that there is no cycle.
   private[cuttle] lazy val jobsInOrder: List[FlowJob] = {
@@ -88,7 +89,20 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
   /**
     *  Return an hash based on the edges of the workflow using MurmurHash3 from std lib
     */
-  lazy val hash =  Math.abs(scala.util.hashing.MurmurHash3.arrayHash(edges.toArray))
+  lazy val hash : Int =  Math.abs(scala.util.hashing.MurmurHash3.arrayHash(edges.toArray))
+
+
+  def verticesFrom(kind: RoutingKind.Routing): Set[FlowJob] = edges.foldLeft(Set.empty[FlowJob]) {
+    case (acc, (child, parent, route)) => if (route == kind) (acc + child) + parent else acc
+  }
+
+  def get(jobId : String): Option[FlowJob] = {
+    val node = vertices.filter(j => j.id == jobId)
+    node.size match {
+      case 1 => Some(node.head)
+      case _ => None
+    }
+  }
 
   /**
     * Compose a [[FlowWorkflow]] with another [[FlowWorkflow]] but without any
@@ -115,7 +129,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     */
 
   def -->(success : FlowWorkflow) : FlowWorkflow = andThen((success, RoutingKind.Success))
-  def andThen(rightOperand : (FlowWorkflow, RoutingKind.Routing)): FlowWorkflow = {
+  private def andThen(rightOperand : (FlowWorkflow, RoutingKind.Routing)): FlowWorkflow = {
 
     val leftWorkflow = this
     val (rightWorkflow, kindRoute) = rightOperand

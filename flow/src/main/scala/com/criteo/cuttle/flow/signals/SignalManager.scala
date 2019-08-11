@@ -43,6 +43,7 @@ class SignalManager[K,V](sharedState : Ref[IO, SignalManager.TopicState[K, V]], 
    */
   def subscribeOnTopic(id : K): Stream[IO, (K, V)] = for {
     stateMapOfTopic <- Stream.eval(sharedState.get)
+    _ <- Stream.eval(IO(println(s"Trying to get $id in ${stateMapOfTopic.keySet.toList}")))
     topic = stateMapOfTopic(id)
     streamOfSignals <- topic
       .subscribe(nbOfSignalInQueue)
@@ -51,23 +52,22 @@ class SignalManager[K,V](sharedState : Ref[IO, SignalManager.TopicState[K, V]], 
   } yield streamOfSignals
 
   /**
-    * @todo manage error (Key not existing)
     * Pipe to push message to the good topic according to the key
     * @return a Stream of Unit
     */
+
   private def pushMessageToTopics : Pipe[IO, KafkaMessage.Message[K, V], Unit] = event => {
     for {
       stateMapOfTopic <- Stream.eval(sharedState.get)
       msg <- event
       record  = msg.get.record
-      publish = stateMapOfTopic
-        .get(record.key())
-        .map { topic =>
-          topic.publish1(msg)
-        }
-        .fold(IO.unit)(identity)
-      _ <- Stream.eval(publish)
-    } yield ()
+
+      _ <- Stream.eval(IO(println(s"push to topic ${record.key()}")))
+      publish <- Stream.eval(stateMapOfTopic
+        .get(record.key()).fold(IO.unit) { topic =>
+            topic.publish1(msg)
+        })
+    } yield publish
   }
 
   /**
@@ -75,9 +75,9 @@ class SignalManager[K,V](sharedState : Ref[IO, SignalManager.TopicState[K, V]], 
     * @param id Key in the kafka topic
     * @return A boolean of creation
     */
-  def newTopic(id : K): IO[Boolean] = for {
+  def newTopic(id : K): IO[Unit] = for {
     topic <- Topic[IO, KafkaMessage.Message[K, V]](None)
-    state <- sharedState.tryUpdate(oldState => oldState + (id -> topic))
+    state <- sharedState.update(oldState => oldState + (id -> topic))
   } yield state
 
   /**
