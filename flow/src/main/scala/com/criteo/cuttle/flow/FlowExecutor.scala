@@ -8,6 +8,8 @@ import cats.effect.concurrent.Semaphore
 import com.criteo.cuttle.flow.FlowSchedulerUtils.{FlowJob, JobState}
 import com.criteo.cuttle.{ExecutionPlatform, Executor, Logger, XA, platforms}
 import com.criteo.cuttle.flow.{Database => FlowDB}
+import com.criteo.cuttle.platforms.local.LocalPlatform
+
 import scala.concurrent.duration.Duration
 
 /**
@@ -38,14 +40,14 @@ class FlowExecutor(xa : XA,
   def start: IO[Either[Throwable, (FlowWorkflow, JobState)]] =
     for {
       refState   <- Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState])
-      scheduler  =  FlowScheduler(logger, workflowId, refState)
+      scheduler  =  FlowScheduler(logger, workflowId, refState, jobs.hash)
       serialize  <- FlowDB.serializeGraph(jobs).value.transact(xa)
       done <- serialize match {
         case Left(e) =>
           logger.error(e.getMessage).map(_ =>  Left(e))
         case Right(_) =>
           logger.info(s"Start workflow $workflowId").flatMap { _ =>
-            scheduler.executeWorkload(jobs, executor, xa, logger).value
+            scheduler.executeWorkflow(jobs, executor, xa, logger).value
           }
       }
     } yield done
@@ -60,7 +62,7 @@ class FlowExecutor(xa : XA,
   def parStart(semaphore : Semaphore[IO]): IO[Either[Throwable, (FlowWorkflow, JobState)]] =
     for {
       refState   <- Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState])
-      scheduler  =  FlowScheduler(logger, workflowId, refState)
+      scheduler  =  FlowScheduler(logger, workflowId, refState, jobs.hash)
       _ <- semaphore.acquire
       serialize  <- FlowDB.serializeGraph(jobs).value.transact(xa)
       _ <- semaphore.release
@@ -69,7 +71,7 @@ class FlowExecutor(xa : XA,
           logger.error(e.getMessage).map(_ =>  Left(e))
         case Right(_) =>
           logger.info(s"Start workflow $workflowId").flatMap { _ =>
-            scheduler.executeWorkload(jobs, executor, xa, logger).value
+            scheduler.executeWorkflow(jobs, executor, xa, logger).value
           }
       }
     } yield done
@@ -77,18 +79,26 @@ class FlowExecutor(xa : XA,
 
 
   /**
-    Run a job from a workflow
-
+    Run a job from the workflow
+    * @param jobId the id of the job to run in the workflow
     */
-  def runSingleJob(jobId: String)  = {
+  def runSingleJob(jobId: String): IO[Either[Throwable, (FlowWorkflow, JobState)]] = {
 
     val job = jobs.vertices.find(j => j.id == jobId)
     if (job.isEmpty) IO.pure(Left(new Throwable(s"$jobId does not exist")))
     else for {
       refState    <- Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState])
-      scheduler   =  FlowScheduler(logger, workflowId, refState)
-      _    <- logger.info(s"Start workflow $workflowId with job ${job.get.id}")
-      done <- scheduler.executeWorkload(job.get, executor, xa, logger).value
+      serialize  <- FlowDB.serializeGraph(jobs).value.transact(xa)
+      scheduler   =  FlowScheduler(logger, workflowId, refState, jobs.hash)
+
+      done <- serialize match {
+        case Left(e) =>
+          logger.error(e.getMessage).map(_ =>  Left(e))
+        case Right(_) =>
+          logger.info(s"Start workflow $workflowId with job ${job.get.id}").flatMap { _ =>
+            scheduler.executeWorkflow(job.get, executor, xa, logger).value
+          }
+      }
     } yield done
   }
 
@@ -98,9 +108,7 @@ object FlowExecutor {
   def defaultPlatforms: Seq[ExecutionPlatform] = {
     import platforms._
     Seq(
-      local.LocalPlatform(
-        maxForkedProcesses = 5
-      )
+      local.LocalPlatform(5)
     )
   }
 
@@ -111,7 +119,7 @@ object FlowExecutor {
     * @param workflowID id given to the workflow
     * @param platforms define the resources that will be used by the executor
     * @param jobs The workflow to run in this project.
-    * @param logger The logger to use to log internal debug informations.
+    * @param logger The logger to use to log internal debug information.
     */
   def apply(xa : XA,
             description: String = "",

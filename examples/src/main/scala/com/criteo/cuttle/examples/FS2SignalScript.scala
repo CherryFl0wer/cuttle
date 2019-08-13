@@ -69,23 +69,22 @@ object FS2SignalScript extends IOApp {
       signalManager <- SignalManager[String, String](kafkaConfig)
       scheduler     <- FlowManager(transactor, signalManager)
       workflowWithTopic = workflow1(signalManager)
-      graph1 <- FlowExecutor(transactor, "Run jobs with signal")(workflowWithTopic)
 
+      graph1 <-  FlowExecutor(transactor, "Run jobs with signal")(workflowWithTopic)
       flow1 <- scheduler.runOne(graph1).start
 
-      runFlowAndStop = flow1.join.flatMap { res => stopping.complete(()).map(_ => res)}
+      runFlowAndStop = flow1.join.flatMap { res => stopping.complete(()).map(_ => res) }
 
       finalResult <- (runFlowAndStop,
-        signalManager.broadcastTopic.interruptWhen(stopping.get.attempt).compile.drain,
-        signalManager.pushOne(graph1.workflowId, "testing").compile.drain)
-        .parMapN { (workflow, _, _) => workflow }
+        signalManager.broadcastTopic.interruptWhen(stopping.get.attempt).compile.drain
+      ).parMapN { (workflow, _) => workflow }
 
       workflow <- IO.fromEither(finalResult)
-      (wf, _) = workflow
+      (workflowEnded, _) = workflow
 
-      graphStepTwo <- FlowExecutor(transactor, "Rerun step two")(wf)
-      runStepTwo <- scheduler.runJobFromFlow("step-two", graphStepTwo).start
-      stepTwoRes <- runStepTwo.join
+      graphStepTwo <- FlowExecutor(transactor, "rerun from step two")(workflowEnded)
+      runStepTwo   <- scheduler.runJobFromFlow("step-two", graphStepTwo).start
+      stepTwoRes   <- runStepTwo.join
 
     } yield {
       if (stepTwoRes.isLeft) ExitCode.Error

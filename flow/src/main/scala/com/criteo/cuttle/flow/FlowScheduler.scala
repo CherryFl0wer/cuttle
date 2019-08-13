@@ -28,7 +28,8 @@ import scala.collection.mutable.{LinkedHashSet, ListBuffer}
   */
 case class FlowScheduler(logger: Logger,
                          workflowId : String,
-                         refState : CatsRef[IO, JobState]) extends Scheduler[FlowScheduling] {
+                         refState : CatsRef[IO, JobState],
+                         hashWorkflow : Int) extends Scheduler[FlowScheduling] {
 
 
   override val name = "flow"
@@ -72,9 +73,9 @@ case class FlowScheduler(logger: Logger,
     * @param context the context of the job
     * @param xa doobie sql
     * */
-  private def saveResult(wfHash : Int, job : FlowJob, xa : XA) = for {
+  private def saveResult(job : FlowJob, xa : XA) = for {
       _ <- Database
-        .insertResult(wfHash.toString, workflowId, job.id,  job.scheduling.inputs.asJson, job.scheduling.outputs)
+        .insertResult(hashWorkflow.toString, workflowId, job.id,  job.scheduling.inputs.asJson, job.scheduling.outputs)
         .transact(xa) // Attempt in case of err
   } yield ()
 
@@ -168,7 +169,8 @@ case class FlowScheduler(logger: Logger,
     * */
   private[flow] def runJobs(wf: CatsRef[IO, FlowWorkflow],
                             executor: Executor[FlowScheduling],
-                            xa : XA, running : Set[RunJob]): IO[Either[Throwable, Set[RunJob]]] = {
+                            xa : XA,
+                            running : Set[RunJob]): IO[Either[Throwable, Set[RunJob]]] = {
 
     val (completed, stillRunning) = completion(running)
 
@@ -183,15 +185,15 @@ case class FlowScheduler(logger: Logger,
               case Output(res) =>
                 val jobWithOutput = job.copy(scheduling = FlowScheduling(inputs = job.scheduling.inputs, outputs = res))(job.effect)
                 jobToUpdateOutput.append(jobWithOutput)
-                Some(saveResult(workflow.hash, jobWithOutput, xa).map(_ => jobWithOutput -> Done))
+                Some(saveResult(jobWithOutput, xa).map(_ => jobWithOutput -> Done))
               case OutputErr(err) =>
                 val jobWithError = job.copy(scheduling = FlowScheduling(inputs = job.scheduling.inputs, outputs = err))(job.effect)
                 jobToUpdateOutput.append(jobWithError)
-                Some(saveResult(workflow.hash, jobWithError, xa).map(_ => jobWithError -> Failed))
+                Some(saveResult(jobWithError, xa).map(_ => jobWithError -> Failed))
 
-              case _ => Some(saveResult(workflow.hash, job, xa).map(_ => job -> Done))
+              case _ => Some(saveResult(job, xa).map(_ => job -> Done))
             }
-          case _ => Some(saveResult(workflow.hash, job, xa).map(_ => job -> Failed))
+          case _ => Some(saveResult(job, xa).map(_ => job -> Failed))
         }
       }.toList.traverse(identity)
 
@@ -231,12 +233,11 @@ case class FlowScheduler(logger: Logger,
     */
 
 
-  def executeWorkload(jobs: Workload[FlowScheduling],
+  def executeWorkflow(workflow: FlowWorkflow,
                       executor: Executor[FlowScheduling],
                       xa: XA,
                       logger: Logger): EitherT[IO, Throwable, (FlowWorkflow, JobState)] = {
 
-    val workflow  = jobs.asInstanceOf[FlowWorkflow]
     for {
       _           <- initialize(workflow, xa, logger)
       workflowRef <- EitherT.right[Throwable](CatsRef.of[IO, FlowWorkflow](workflow))
@@ -245,6 +246,7 @@ case class FlowScheduler(logger: Logger,
       wf <- EitherT.right[Throwable](workflowRef.get)
     } yield (wf, state)
   }
+
 
   /**
     * _

@@ -85,11 +85,10 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     }
   }
 
-
   /**
     *  Return an hash based on the edges of the workflow using MurmurHash3 from std lib
     */
-  lazy val hash : Int =  Math.abs(scala.util.hashing.MurmurHash3.arrayHash(edges.map(e => (e._1.id, e._2.id, e._3)).toArray))
+  lazy val hash : Int =  Math.abs(scala.util.hashing.MurmurHash3.setHash(edges.map(e => (e._1.id, e._2.id, e._3))))
 
 
   def verticesFrom(kind: RoutingKind.Routing): Set[FlowJob] = edges.foldLeft(Set.empty[FlowJob]) {
@@ -103,6 +102,15 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
       case _ => None
     }
   }
+
+  /**
+    * Replace a job with a new job (must have same id)
+    * if the job does not exist return this
+    * otherwise new workflow w
+    * @param job the new job
+    * @return
+    */
+  def replace(job : FlowJob) : FlowWorkflow = FlowWorkflow.replace(this, job)
 
   /**
     * Compose a [[FlowWorkflow]] with another [[FlowWorkflow]] but without any
