@@ -1,24 +1,18 @@
 package com.criteo.cuttle.flow
 
-import java.util.concurrent.Executors
-
 import cats.effect.concurrent.Deferred
-import fs2.Stream
 import io.circe.Json
 import org.scalatest.Matchers
 import org.scalatest.FunSuite
 import cats.effect.{ContextShift, IO, Timer}
 import com.criteo.cuttle.Utils.logger
-import com.criteo.cuttle.flow._
 import com.criteo.cuttle.flow.FlowSchedulerUtils.WFSignalBuilder
 import com.criteo.cuttle.flow.signals._
 import com.criteo.cuttle.flow.utils._
 import com.criteo.cuttle.{DatabaseConfig, Finished, ITTestScheduling, Job, Output, Database => CoreDB}
 
-import scala.concurrent.{ExecutionContext, Future}
-import scala.concurrent.duration._
+import scala.concurrent.{ExecutionContext}
 import io.circe.syntax._
-import fs2._
 
 
 /**
@@ -47,7 +41,6 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
       lazy val job1bis = Job("step-one-bis", FlowScheduling()) { implicit execution =>
         execution.streams.info("On step bis")
         val receive = for {
-          _ <- IO(println(s"Context of workflow ${execution.context.workflowId}"))
           value <- topic
             .subscribeOnTopic(execution.context.workflowId)
             .evalTap(m => IO(println(s"received $m")))
@@ -73,36 +66,52 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     import cats.implicits._
 
     val program = for {
-      tc            <- xa
+      transactor    <- xa
       stopping      <- Deferred[IO, Unit]
       signalManager <- SignalManager[String, String](kafkaCf)
-      scheduler     <- WorkflowManager(tc, signalManager)(20)
+      scheduler     <- FlowManager(transactor, signalManager)
       workflowWithTopic = simpleWorkflow(signalManager)
 
-      graph1 <- FlowCreator(tc, "Run jobs with signal")(workflowWithTopic)
-      graph2 <- FlowCreator(tc, "Run jobs with signal")(workflowWithTopic)
+      graph1 <- FlowExecutor(transactor, "Run jobs with signal")(workflowWithTopic)
+      graph2 <- FlowExecutor(transactor, "Run jobs with signal")(workflowWithTopic)
 
-      fib1 <- scheduler.runOne(graph1).start
-      fib2 <- scheduler.runOne(graph2).start
+      flow1 <- scheduler.runOne(graph1).start
+      flow2 <- scheduler.runOne(graph2).start
 
-      runFlowAndStop = (fib1.join, fib2.join).parMapN { (wf1, wf2) =>
-        (wf1, wf2)
+      runFlowAndStop = (flow1.join, flow2.join).parMapN { (resWorkflow1, resWorkflow2) =>
+        (resWorkflow1, resWorkflow2)
       }.flatMap { res => stopping.complete(()).map(_ => res)}
 
-      wf12 <- (runFlowAndStop,
-            signalManager.broadcastTopic.take(2).interruptWhen(stopping.get.attempt).compile.drain,
+      finalResult <- (runFlowAndStop,
+            signalManager.broadcastTopic.interruptWhen(stopping.get.attempt).compile.drain,
             signalManager.pushOne(graph2.workflowId, "step-one-bis").compile.drain,
             signalManager.pushOne(graph1.workflowId, "step-one-bis").compile.drain)
-        .parMapN { (wf12, _, _, _) => wf12 }
-    } yield wf12
+        .parMapN { (bothWorkflow, _, _, _) => bothWorkflow }
+    } yield finalResult
 
-    val wf12 = program.unsafeRunSync()
-    val (flow1, flow2) = wf12
+    val bothWorkflow = program.unsafeRunSync()
+    val (flow1, flow2) = bothWorkflow
 
     flow1 should be ('right)
     flow2 should be ('right)
 
-    assert(true)
+    val (flowWorkflow1, stateWF1) = flow1.toOption.get
+    val (flowWorkflow2, stateWF2) = flow2.toOption.get
+
+    stateWF1.keySet should contain theSameElementsAs(flowWorkflow1 verticesFrom RoutingKind.Success)
+    stateWF1.values.toList should contain theSameElementsAs List.fill(flowWorkflow1.vertices.size)(Done)
+
+    stateWF2.keySet should contain theSameElementsAs(flowWorkflow2 verticesFrom RoutingKind.Success)
+    stateWF2.values.toList should contain theSameElementsAs List.fill(flowWorkflow2.vertices.size)(Done)
+
+    val nodeFinalWF1 = flowWorkflow1 get "step-two"
+    val nodeFinalWF2 = flowWorkflow2 get "step-two"
+
+    val aud1 = nodeFinalWF1.get.scheduling.inputs.hcursor.downField("aud").as[String].isRight
+    val aud2 = nodeFinalWF2.get.scheduling.inputs.hcursor.downField("aud").as[String].isRight
+
+    assert(aud1 && aud2)
+
   }
 
 }

@@ -52,7 +52,7 @@ class KafkaMessage[K, V](kafkaConfig : KafkaConfig)
       consumer     <- consumerStream[IO].using(consumerSettings)(csKafka, timer)
         .evalTap(_.subscribeTo(kafkaConfig.topic))
         .flatMap(_.stream)
-          .evalTap(m => IO(println(s"${m.record.key()} has been capted")))
+        .evalTap(m => IO(println(s"passed consuming $m")))
         .map(Some(_))
     } yield consumer
 

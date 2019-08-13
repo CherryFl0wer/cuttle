@@ -89,7 +89,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
   /**
     *  Return an hash based on the edges of the workflow using MurmurHash3 from std lib
     */
-  lazy val hash : Int =  Math.abs(scala.util.hashing.MurmurHash3.arrayHash(edges.toArray))
+  lazy val hash : Int =  Math.abs(scala.util.hashing.MurmurHash3.arrayHash(edges.map(e => (e._1.id, e._2.id, e._3)).toArray))
 
 
   def verticesFrom(kind: RoutingKind.Routing): Set[FlowJob] = edges.foldLeft(Set.empty[FlowJob]) {
@@ -113,11 +113,11 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
 
   def &&(other : FlowWorkflow) : FlowWorkflow = and(other)
 
-  def and(otherWorflow: FlowWorkflow): FlowWorkflow = {
+  def and(otherWorkflow: FlowWorkflow): FlowWorkflow = {
     val leftWorkflow = this
     new FlowWorkflow {
-      val vertices = leftWorkflow.vertices ++ otherWorflow.vertices
-      val edges = leftWorkflow.edges ++ otherWorflow.edges
+      val vertices = leftWorkflow.vertices ++ otherWorkflow.vertices
+      val edges = leftWorkflow.edges ++ otherWorkflow.edges
     }
   }
 
@@ -199,7 +199,7 @@ object FlowWorkflow {
     */
   def without(wf: FlowWorkflow, jobs: Set[FlowJob]): FlowWorkflow = {
     if (jobs.isEmpty)
-      wf
+      return wf
 
     val newVertices = wf.vertices -- jobs
     val newEdges = wf.edges.filterNot(p => jobs.contains(p._1))
@@ -221,6 +221,9 @@ object FlowWorkflow {
     */
   def replace(wf: FlowWorkflow, job: FlowJob): FlowWorkflow = {
 
+    val exist = wf.vertices.find(j => j.id == job.id)
+
+    if (exist.isEmpty) return wf
 
     val newEdgesFrom = wf.edges.filter(p => p._1.id == job.id).map(p => (job, p._2, p._3))
     val newEdgesTo   = wf.edges.filter(p => p._2.id == job.id).map(p => (p._1, job, p._3))
@@ -243,12 +246,12 @@ object FlowWorkflow {
     */
   def withKind(wf : FlowWorkflow, kind : RoutingKind.Routing) = {
 
-    val setOfVertice = wf.edges.foldLeft(Set.empty[FlowJob]) { case (acc, edge) =>
+    val setOfVertice = wf.edges.foldLeft(wf.vertices) { case (acc, edge) =>
       val (parent, child, route) = edge
       if (route == kind)
         acc + parent + child
       else
-        acc + parent
+        (acc + parent) - child
     }
 
     val newVertices = if (setOfVertice.isEmpty) wf.roots else setOfVertice

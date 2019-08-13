@@ -141,7 +141,7 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     val wf = (job(0) && waitingJob("0", 3.seconds)) --> job(1) --> job(2)
     val program = for {
       tr <- xa
-      project <- FlowCreator(tr)(wf)
+      project <- FlowExecutor(tr)(wf)
       graphFinal  <- project.start
     } yield {
       graphFinal should be ('right)
@@ -158,7 +158,7 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
     val program = for {
       tr <- xa
-      project <- FlowCreator(tr)(wf)
+      project <- FlowExecutor(tr)(wf)
       graphFinal  <- project.start
     } yield {
       graphFinal should be ('right)
@@ -175,7 +175,7 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
     val program = for {
       tr <- xa
-      project <- FlowCreator(tr)(wf)
+      project <- FlowExecutor(tr)(wf)
       graphFinal  <- project.start
     } yield {
       graphFinal should be ('right)
@@ -196,7 +196,7 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
     val program = for {
       tr <- xa
-      project <- FlowCreator(tr)(wf)
+      project <- FlowExecutor(tr)(wf)
       graphFinal  <- project.start
     } yield {
       graphFinal should be ('right)
@@ -208,6 +208,7 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     program.unsafeRunSync()
   }
 
+  // TEST ERROR
 
   test("it should check if output are fine at the end") {
     import io.circe.syntax._
@@ -230,7 +231,7 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
     val program = for {
       tr <- xa
-      project <- FlowCreator(tr)(wf)
+      project <- FlowExecutor(tr)(wf)
       graphFinal  <- project.start
     } yield {
       graphFinal should be ('right)
@@ -248,6 +249,26 @@ class FlowTestsSpec extends FunSuite with ITTestScheduling with Matchers {
       result shouldBe true
     }
 
+
+    program.unsafeRunSync()
+  }
+
+
+  test("Should rerun a single job") {
+    val part1 = (job(0) && waitingJob(time = 3.seconds)) --> job(3)
+    val part2 = job(2) --> job(4)
+    val wf = (part1 && part2) --> job(5)
+
+    val program = for {
+      tr <- xa
+      project     <- FlowExecutor(tr)(wf)
+      graphFinal  <- project.start
+    } yield {
+      graphFinal should be ('right)
+      val (flow, state) = graphFinal.toOption.get
+      state.keySet should contain theSameElementsAs(flow verticesFrom RoutingKind.Success)
+      state.values.toList should contain theSameElementsAs List.fill(flow.vertices.size)(Done)
+    }
 
     program.unsafeRunSync()
   }

@@ -43,7 +43,6 @@ class SignalManager[K,V](sharedState : Ref[IO, SignalManager.TopicState[K, V]], 
    */
   def subscribeOnTopic(id : K): Stream[IO, (K, V)] = for {
     stateMapOfTopic <- Stream.eval(sharedState.get)
-    _ <- Stream.eval(IO(println(s"Trying to get $id in ${stateMapOfTopic.keySet.toList}")))
     topic = stateMapOfTopic(id)
     streamOfSignals <- topic
       .subscribe(nbOfSignalInQueue)
@@ -61,8 +60,6 @@ class SignalManager[K,V](sharedState : Ref[IO, SignalManager.TopicState[K, V]], 
       stateMapOfTopic <- Stream.eval(sharedState.get)
       msg <- event
       record  = msg.get.record
-
-      _ <- Stream.eval(IO(println(s"push to topic ${record.key()}")))
       publish <- Stream.eval(stateMapOfTopic
         .get(record.key()).fold(IO.unit) { topic =>
             topic.publish1(msg)
@@ -85,11 +82,11 @@ class SignalManager[K,V](sharedState : Ref[IO, SignalManager.TopicState[K, V]], 
     * @param id Key used at the creation of a new topic `newTopic(K)`
     * @return
     */
-  def removeTopic(id : K) : IO[Boolean] = for {
+  def removeTopic(id : K) : IO[Unit] = for {
     state <- sharedState.get
     updatedState = state - id
-    st <- sharedState.tryUpdate(_ => updatedState)
-  } yield st
+    _ <- sharedState.update(_ => updatedState)
+  } yield ()
 
 }
 

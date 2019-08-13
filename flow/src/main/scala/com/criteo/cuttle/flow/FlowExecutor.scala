@@ -8,7 +8,6 @@ import cats.effect.concurrent.Semaphore
 import com.criteo.cuttle.flow.FlowSchedulerUtils.{FlowJob, JobState}
 import com.criteo.cuttle.{ExecutionPlatform, Executor, Logger, XA, platforms}
 import com.criteo.cuttle.flow.{Database => FlowDB}
-import io.circe.Json
 import scala.concurrent.duration.Duration
 
 /**
@@ -20,20 +19,16 @@ import scala.concurrent.duration.Duration
   * @param jobs The way jobs are handled
   * @param logger To print message in STDOUT
   */
-class FlowCreator(xa : XA,
-                  executor : Executor[FlowScheduling],
-                  logRetention : Option[Duration],
-                  val workflowId: String,
-                  val description: String,
-                  platforms: Seq[ExecutionPlatform],
-                  val jobs: FlowWorkflow,
-                  logger: Logger)(implicit C: Concurrent[IO]) {
+class FlowExecutor(xa : XA,
+                   executor : Executor[FlowScheduling],
+                   logRetention : Option[Duration],
+                   val workflowId: String,
+                   val description: String,
+                   platforms: Seq[ExecutionPlatform],
+                   val jobs: FlowWorkflow,
+                   logger: Logger)(implicit C: Concurrent[IO]) {
   import doobie.implicits._
-  import fs2.concurrent.SignallingRef
   import cats.effect.concurrent.Ref
-
-  val workflowIsOver: IO[SignallingRef[IO, Boolean]] = SignallingRef[IO, Boolean](true)
-
 
   /**
     Start the workflow and execute with the given environment.
@@ -42,8 +37,6 @@ class FlowCreator(xa : XA,
     */
   def start: IO[Either[Throwable, (FlowWorkflow, JobState)]] =
     for {
-      sigOver <- workflowIsOver
-      _ <- sigOver.set(false)
       refState   <- Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState])
       scheduler  =  FlowScheduler(logger, workflowId, refState)
       serialize  <- FlowDB.serializeGraph(jobs).value.transact(xa)
@@ -55,7 +48,6 @@ class FlowCreator(xa : XA,
             scheduler.executeWorkload(jobs, executor, xa, logger).value
           }
       }
-      _ <- sigOver.set(true)
     } yield done
 
   /**
@@ -67,8 +59,6 @@ class FlowCreator(xa : XA,
     */
   def parStart(semaphore : Semaphore[IO]): IO[Either[Throwable, (FlowWorkflow, JobState)]] =
     for {
-      sigOver <- workflowIsOver
-      _ <- sigOver.set(false)
       refState   <- Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState])
       scheduler  =  FlowScheduler(logger, workflowId, refState)
       _ <- semaphore.acquire
@@ -82,32 +72,29 @@ class FlowCreator(xa : XA,
             scheduler.executeWorkload(jobs, executor, xa, logger).value
           }
       }
-      _ <- sigOver.set(true)
     } yield done
 
 
+
   /**
-    * @param jobId Id given to the job in the [[FlowWorkflow]]
-    * @param input If is not None then will replace the json input of the job by the new input otherwise take
-    *              parent's input
+    Run a job from a workflow
+
     */
-  def runSingleJob(jobId: String, input : Option[Json] = None)  = {
+  def runSingleJob(jobId: String)  = {
 
-    val job = jobs.vertices.filter(j => j.id == jobId).head
-
-    val newInput = if (input.isEmpty) for {
-      lstOfParent <- FlowDB.retrieveWorkflowResults(workflowId).transact(xa)
-      parents = jobs.parentsFromRoute(job, RoutingKind.Success).map(_.id).toList
-      parentsJsonOutput = lstOfParent.filter(j => parents.contains(j._1))
-      newJobInput = FlowSchedulerUtils.mergeDuplicateJson((job.id, Json.Null), parentsJsonOutput)
-    } yield newJobInput._2 else IO.pure(input.get)
-
-    newInput.map(inp => jobAsWorkflow(job.copy(scheduling = FlowScheduling(inputs = inp))(job.effect)))
+    val job = jobs.vertices.find(j => j.id == jobId)
+    if (job.isEmpty) IO.pure(Left(new Throwable(s"$jobId does not exist")))
+    else for {
+      refState    <- Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState])
+      scheduler   =  FlowScheduler(logger, workflowId, refState)
+      _    <- logger.info(s"Start workflow $workflowId with job ${job.get.id}")
+      done <- scheduler.executeWorkload(job.get, executor, xa, logger).value
+    } yield done
   }
 
 }
 
-object FlowCreator {
+object FlowExecutor {
   def defaultPlatforms: Seq[ExecutionPlatform] = {
     import platforms._
     Seq(
@@ -132,9 +119,9 @@ object FlowCreator {
             platforms: Seq[ExecutionPlatform] = defaultPlatforms,
             logsRetention : Option[Duration] = None)
            (jobs: FlowWorkflow)
-           (implicit logger: Logger, C : Concurrent[IO]): IO[FlowCreator] = for {
+           (implicit logger: Logger, C : Concurrent[IO]): IO[FlowExecutor] = for {
     executor <- IO.pure(new Executor[FlowScheduling](platforms, xa, logger, workflowID, logsRetention)(None))
-    flow     <- IO.pure(new FlowCreator(xa, executor, logsRetention, workflowID, description, platforms, jobs, logger))
+    flow     <- IO.pure(new FlowExecutor(xa, executor, logsRetention, workflowID, description, platforms, jobs, logger))
   } yield flow
 
 }

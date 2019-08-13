@@ -18,6 +18,7 @@ import cats.implicits._
 import com.criteo.cuttle.flow.utils.JobUtils
 
 import scala.annotation.tailrec
+import scala.collection.mutable
 import scala.collection.mutable.{LinkedHashSet, ListBuffer}
 
 
@@ -32,17 +33,17 @@ case class FlowScheduler(logger: Logger,
 
   override val name = "flow"
 
-  private val queries = Queries(logger)
+  private val queries: Queries = Queries(logger)
 
-  private val discardedJob = {
-    new LinkedHashSet[FlowJob]()
-  }
+  private val discardedJob =
+    new mutable.LinkedHashSet[FlowJob]()
+
 
   private def currentJobsRunning(state : JobState) : Set[FlowJob] =
     state.filter { case (_, jobState) =>
       jobState match {
         case Running(_) => true
-        case _ => false
+        case _          => false
       }
     }.keySet
 
@@ -51,7 +52,7 @@ case class FlowScheduler(logger: Logger,
     state.filter { case (_, jobState) =>
       jobState match {
         case Done => true
-        case _ => false
+        case _    => false
       }
     }.keySet
 
@@ -60,7 +61,7 @@ case class FlowScheduler(logger: Logger,
     state.filter { case (_, jobState) =>
       jobState match {
         case Failed => true
-        case _ => false
+        case _      => false
       }
     }.keySet
 
@@ -113,8 +114,8 @@ case class FlowScheduler(logger: Logger,
      Select the jobs that will run
     * @param workflow To get the next jobs to run and the result from previous node
     * @param executor To get data for context job
-    * @param state Current state of the jobs
-    * @return A sequence of executable jobs with their new formated new inputs
+    * @param newState Current state of the jobs
+    * @return A sequence of executable jobs with their new formatted new inputs
     */
 
   private[flow] def jobsToRun(workflow: FlowWorkflow,
@@ -177,7 +178,7 @@ case class FlowScheduler(logger: Logger,
       jobToUpdateOutput = ListBuffer.empty[FlowJob]
       updatedJob <- completed.flatMap {
         case (job, _, future) => future.value.get match { // Check jobs status and save into the db
-          case status if status.isSuccess || stateMap.get(job).isDefined && stateMap(job) == Done =>
+          case status if status.isSuccess || (stateMap.get(job).isDefined && stateMap(job) == Done) =>
             status.get match { // Set output of the current job
               case Output(res) =>
                 val jobWithOutput = job.copy(scheduling = FlowScheduling(inputs = job.scheduling.inputs, outputs = res))(job.effect)
@@ -198,14 +199,13 @@ case class FlowScheduler(logger: Logger,
       updatedMapJob = updatedJob.toMap
 
       _ <- refState.update { st =>  st ++ updatedMapJob }
-      stateSnapshot <- refState.get
+      stateSnapshot   <- refState.get
       workflowUpdated <- wf.get
       runningSeq    = jobsToRun(workflowUpdated, executor, stateSnapshot)
       newExecutions = executor.runAll(runningSeq)
-      _ <- logger.debug(s"Executions of ${newExecutions.map(_._1.id)} in $workflowId")
       // Add execution to state
       execState = newExecutions.map { case (exec, _) => exec.job -> Running(exec.id) }.toMap
-      _ <- refState.update(st => st ++ execState)
+      _         <- refState.update(st => st ++ execState)
 
       statusJobs = stillRunning ++ newExecutions.map { case (exec, res) => (exec.job, exec.context, res) }
 
@@ -222,7 +222,7 @@ case class FlowScheduler(logger: Logger,
 
 
   /**
-  Starts the scheduler for the given Workflow. Immediatly the scheduler will start interpreting
+  Starts the scheduler for the given Workflow. Immediately the scheduler will start interpreting
   the workflow and generate [[Execution Executions]] sent to the provided [[Executor]].
     * @param jobs The jobs to run in this case in a DAG representation
     * @param executor The executor to use to run the generated [[Execution Executions]].

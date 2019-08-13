@@ -2,9 +2,10 @@ package com.criteo.cuttle.examples
 
 import cats.data.OptionT
 import cats.effect._
+import cats.effect.concurrent.Deferred
 import com.criteo.cuttle.flow.FlowSchedulerUtils.WFSignalBuilder
 import com.criteo.cuttle.{DatabaseConfig, Finished, Job, Output, OutputErr}
-import com.criteo.cuttle.flow.{FlowCreator, FlowScheduling, WorkflowManager}
+import com.criteo.cuttle.flow.{FlowExecutor, FlowManager, FlowScheduling, FlowWorkflow}
 import com.criteo.cuttle.flow.signals._
 import com.criteo.cuttle.flow.utils.KafkaConfig
 import io.circe.Json
@@ -15,7 +16,7 @@ object FS2SignalScript extends IOApp {
   import io.circe.syntax._
   import fs2._
 
-  val workflow1 : WFSignalBuilder[String, EventSignal] = topic => {
+  val workflow1 : WFSignalBuilder[String, String] = topic => {
     val job1    = Job(s"step-one",     FlowScheduling(inputs = Json.obj("audience" -> "step is one".asJson))) { implicit e =>
       val x = e.optic.audience.string.getOption(e.job.scheduling.inputs).get + " passed to step two"
       IO(Output(Json.obj("result" -> x.asJson))).unsafeToFuture()
@@ -35,10 +36,13 @@ object FS2SignalScript extends IOApp {
           .evalTap(ll => IO(println(s"Received a message for ${ll._1}")))
           .head
           .compile
-          .toList
+          .last
         _ <- IO(println(s"Received $value"))
       } yield {
-        OutputErr(Json.obj("err" -> "Oh no uwu".asJson))
+        if (value.isEmpty)
+          OutputErr(Json.obj("err" -> "Oh no uwu".asJson))
+        else
+          Output(Json.obj("res" -> "coming from job1 bis".asJson))
       }
       receive.unsafeToFuture()
     }
@@ -49,35 +53,45 @@ object FS2SignalScript extends IOApp {
       IO(Output(Json.obj("exploded" -> x.asJson))).unsafeToFuture()
     }
 
-    job1.error(errJob) --> job2
+    (job1.error(errJob) && job1bis) --> job2
   }
 
   import com.criteo.cuttle.{ Database => CoreDB }
   def run(args: List[String]): IO[ExitCode] = {
 
-    val kafkaConfig = KafkaConfig("cuttle_message", "cuttlemsg", List("localhost:9092"))
-    /*
-    This testing program is used to run multiple workflow at the same time.
-    By setting up a workflow manager that take the length of the queue and a signalManager
-    */
-/*
-    val programInitiate = for {
-      // Initialisation
-      xa <- Stream.eval(CoreDB.connect(DatabaseConfig.fromEnv)(logger))
-      signalManager <- Stream.eval(SignalManager[String, EventSignal](kafkaConfig))
-      scheduler     <- WorkflowManager(xa, signalManager)()
+    val kafkaConfig = KafkaConfig("signal_cuttle", "cuttlemsg", List("localhost:9092"))
+
+    import cats.implicits._
+
+    val program = for {
+      transactor    <- CoreDB.connect(DatabaseConfig.fromEnv)(logger) // connect to the database
+      stopping      <- Deferred[IO, Unit]
+      signalManager <- SignalManager[String, String](kafkaConfig)
+      scheduler     <- FlowManager(transactor, signalManager)
       workflowWithTopic = workflow1(signalManager)
+      graph1 <- FlowExecutor(transactor, "Run jobs with signal")(workflowWithTopic)
 
-      // First run
-      graph  <- Stream.eval(FlowCreator(xa, "Run jobs with signal")(workflowWithTopic))
-      fstRes <- Stream.eval(scheduler.runOne(graph))
-      // Second run
-      //sndRes <- Stream.eval(scheduler.runSingleJob(graph, "step-two"))
-    } yield fstRes
+      flow1 <- scheduler.runOne(graph1).start
 
-    val resultat = programInitiate.compile.lastOrError.unsafeRunSync()
-*/
+      runFlowAndStop = flow1.join.flatMap { res => stopping.complete(()).map(_ => res)}
 
-    IO(ExitCode.Success)
+      finalResult <- (runFlowAndStop,
+        signalManager.broadcastTopic.interruptWhen(stopping.get.attempt).compile.drain,
+        signalManager.pushOne(graph1.workflowId, "testing").compile.drain)
+        .parMapN { (workflow, _, _) => workflow }
+
+      workflow <- IO.fromEither(finalResult)
+      (wf, _) = workflow
+
+      graphStepTwo <- FlowExecutor(transactor, "Rerun step two")(wf)
+      runStepTwo <- scheduler.runJobFromFlow("step-two", graphStepTwo).start
+      stepTwoRes <- runStepTwo.join
+
+    } yield {
+      if (stepTwoRes.isLeft) ExitCode.Error
+      else ExitCode.Success
+    }
+
+    program
   }
 }
