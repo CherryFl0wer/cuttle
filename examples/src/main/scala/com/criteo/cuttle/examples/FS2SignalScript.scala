@@ -49,8 +49,9 @@ object FS2SignalScript extends IOApp {
 
     val job2    = Job(s"step-two",  FlowScheduling(inputs = Json.obj("test" -> "final test".asJson))) { implicit e =>
       val in = e.job.scheduling.inputs
-      val x = e.optic.result.string.getOption(in).get + " got it"
-      IO(Output(Json.obj("exploded" -> x.asJson))).unsafeToFuture()
+      val x = e.optic.result.string.getOption(in).fold("No value")(identity) + " got it"
+      val tenerifie = e.optic.tenerifie.string.getOption(in).fold("No value")(identity)
+      IO(Output(Json.obj("exploded" -> x.asJson, "possible" -> tenerifie.asJson))).unsafeToFuture()
     }
 
     (job1.error(errJob) && job1bis) --> job2
@@ -70,6 +71,7 @@ object FS2SignalScript extends IOApp {
       scheduler     <- FlowManager(transactor, signalManager)
       workflowWithTopic = workflow1(signalManager)
 
+      testing =  workflowWithTopic
       graph1 <-  FlowExecutor(transactor, "Run jobs with signal")(workflowWithTopic)
       flow1 <- scheduler.runOne(graph1).start
 
@@ -86,8 +88,13 @@ object FS2SignalScript extends IOApp {
       runStepTwo   <- scheduler.runJobFromFlow("step-two", graphStepTwo).start
       stepTwoRes   <- runStepTwo.join
 
+      runStepTwoAgain <- scheduler.runJobFromWfId("step-two", graph1.workflowId, workflowWithTopic, Some(Json.obj(
+        "tenerifie" -> "sea".asJson,
+        "calcul" -> 4.asJson
+      )))
+
     } yield {
-      if (stepTwoRes.isLeft) ExitCode.Error
+      if (runStepTwoAgain.isLeft) ExitCode.Error
       else ExitCode.Success
     }
 

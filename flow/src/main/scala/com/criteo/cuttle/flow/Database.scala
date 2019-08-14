@@ -104,11 +104,9 @@ private[flow] object Database {
 
    def retrieveWorkflowResults(wfId : String): doobie.ConnectionIO[List[(String, Json)]] =
      sql"""
-            SELECT step_id, outputs FROM flow_results WHERE workflow_id = ${wfId} ORDER BY date
+            SELECT step_id, outputs FROM flow_results WHERE workflow_id = ${wfId}
     """.query[(String, Json)].to[List]
 
-
-  def get
   /**
     * Decode the state
     * @param json

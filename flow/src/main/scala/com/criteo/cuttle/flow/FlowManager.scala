@@ -56,8 +56,8 @@ class FlowManager(semaphore: Semaphore[IO], xa : XA,
       inputInit = initialInput.fold(Json.Null)(identity)
       jsonInput = FlowSchedulerUtils.mergeDuplicateJson((jobId, inputInit), outputsFromJobs)
       newJobWithInput = job.get.copy(scheduling = FlowScheduling(inputs = jsonInput._2))(job.get.effect)
-
-      flowExecution <- FlowExecutor(xa)(newJobWithInput)
+      newGraph = graph replace newJobWithInput
+      flowExecution <- FlowExecutor(xa)(newGraph)
       execution <- flowExecution.runSingleJob(jobId)
      } yield execution
 

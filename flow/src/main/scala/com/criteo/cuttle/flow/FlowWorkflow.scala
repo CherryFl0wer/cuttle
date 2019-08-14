@@ -86,7 +86,8 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
   }
 
   /**
-    *  Return an hash based on the edges of the workflow using MurmurHash3 from std lib
+    *  Return an hash based on the edges (job id, job id, route) of this workflow
+    *  using MurmurHash3 from std lib
     */
   lazy val hash : Int =  Math.abs(scala.util.hashing.MurmurHash3.setHash(edges.map(e => (e._1.id, e._2.id, e._3))))
 
@@ -95,13 +96,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     case (acc, (child, parent, route)) => if (route == kind) (acc + child) + parent else acc
   }
 
-  def get(jobId : String): Option[FlowJob] = {
-    val node = vertices.filter(j => j.id == jobId)
-    node.size match {
-      case 1 => Some(node.head)
-      case _ => None
-    }
-  }
+  def get(jobId : String): Option[FlowJob] = vertices.find(j => j.id == jobId)
 
   /**
     * Replace a job with a new job (must have same id)
@@ -111,6 +106,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     * @return
     */
   def replace(job : FlowJob) : FlowWorkflow = FlowWorkflow.replace(this, job)
+
 
   /**
     * Compose a [[FlowWorkflow]] with another [[FlowWorkflow]] but without any
@@ -184,6 +180,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
   def all = vertices
 
   override def asJson(implicit se : Encoder[FlowJob]) = workflowEncoder(se)(this)
+
 }
 
 /** Utilities for [[FlowWorkflow]]. */
@@ -214,7 +211,6 @@ object FlowWorkflow {
 
     new FlowWorkflow {
       def vertices = newVertices
-
       def edges = newEdges
     }
   }
@@ -242,7 +238,6 @@ object FlowWorkflow {
     new FlowWorkflow {
       def vertices = newVertices
       def edges = newEdges
-      override lazy val hash = wf.hash
     }
   }
 
