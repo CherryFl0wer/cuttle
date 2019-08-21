@@ -65,8 +65,12 @@ class FlowManager(semaphore: Semaphore[IO], xa : XA,
       jsonInput = FlowSchedulerUtils.mergeDuplicateJson((jobId, inputInit), outputsFromJobs)
       newJobWithInput = job.get.copy(scheduling = FlowScheduling(inputs = jsonInput._2))(job.get.effect)
       newGraph = graph replace newJobWithInput
+
       flowExecution <- FlowExecutor(xa)(newGraph)
+
+      _ <- signalManager.newTopic(flowExecution.workflowId)
       execution <- flowExecution.runSingleJob(jobId)
+      _ <- signalManager.removeTopic(flowExecution.workflowId)
      } yield execution
 
   }

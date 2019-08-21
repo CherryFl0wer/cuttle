@@ -16,7 +16,7 @@ object StartingScript extends IOApp {
   import io.circe.syntax._
   import fs2._
 
-  val workflow1 : WFSignalBuilder[String, String] = topic => {
+  val workflow1 : WFSignalBuilder[String] = topic => {
     val job1    = Job(s"step-one",     FlowScheduling(inputs = Json.obj("audience" -> "step is one".asJson))) { implicit e =>
       val x = e.optic.audience.string.getOption(e.job.scheduling.inputs).get + " passed to step two"
       IO(Output(Json.obj("result" -> x.asJson))).unsafeToFuture()

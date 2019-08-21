@@ -5,7 +5,7 @@ import cats.effect.concurrent.Ref
 import com.criteo.cuttle.flow.utils.{KafkaConfig, KafkaMessage}
 import fs2.{Pipe, Stream}
 import fs2.concurrent.Topic
-import fs2.kafka.{Deserializer, Serializer, consumerStream}
+import fs2.kafka.{Deserializer, Serializer}
 
 /** */
 sealed trait EventSignal extends Serializable

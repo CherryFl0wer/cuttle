@@ -32,7 +32,7 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
 
   test("Signal sync") {
 
-    val simpleWorkflow : WFSignalBuilder[String, String] = topic => {
+    val simpleWorkflow : WFSignalBuilder[String] = topic => {
 
       lazy val job1 =    Job("step-one", FlowScheduling(inputs = Json.obj("audience" -> "step is one".asJson))) { implicit e =>
         IO(Finished).unsafeToFuture()

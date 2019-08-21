@@ -12,7 +12,7 @@ import scala.concurrent.Future
 object FlowSchedulerUtils {
 
 
-  type WFSignalBuilder[K,V] = SignalManager[K,V] => FlowWorkflow
+  type WFSignalBuilder[V] = SignalManager[String,V] => FlowWorkflow
 
   type FlowJob = Job[FlowScheduling]
 

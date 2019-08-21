@@ -222,7 +222,7 @@ case class FlowScheduler(logger: Logger,
 
     for {
       workflow <- EitherT.right[Throwable](refWorkflow.get)
-      _     <- initialize(workflow, xa, logger) //TODO check
+      _     <- initialize(workflow, xa, logger)
       _     <- runWorkflow(executor, xa)(Set.empty)
       state <- EitherT.right[Throwable](refState.get)
       wf    <- EitherT.right[Throwable](refWorkflow.get)
