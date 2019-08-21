@@ -206,7 +206,8 @@ object FlowWorkflow {
     if (jobs.isEmpty)
       return wf
 
-    val newVertices = wf.vertices -- jobs
+    val jobsId = jobs.map(_.id)
+    val newVertices = wf.vertices.filterNot(j => jobsId.contains(j.id))
     val newEdges = wf.edges.filterNot(p => jobs.contains(p._1))
 
     new FlowWorkflow {

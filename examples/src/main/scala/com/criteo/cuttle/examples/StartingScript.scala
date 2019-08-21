@@ -11,7 +11,7 @@ import com.criteo.cuttle.flow.utils.KafkaConfig
 import io.circe.Json
 
 
-object FS2SignalScript extends IOApp {
+object StartingScript extends IOApp {
 
   import io.circe.syntax._
   import fs2._
@@ -56,7 +56,7 @@ object FS2SignalScript extends IOApp {
       IO(Output(Json.obj("exploded" -> x.asJson, "possible" -> tenerifie.asJson))).unsafeToFuture()
     }
 
-    (job1.error(errJob) && job1bis) --> job2
+    (job1.error(errJob) && job1bis.error(errJob)) --> job2
   }
 
   import com.criteo.cuttle.{ Database => CoreDB }
@@ -73,7 +73,7 @@ object FS2SignalScript extends IOApp {
       scheduler     <- FlowManager(transactor, signalManager)
       workflowWithTopic = workflow1(signalManager)
 
-      testing =  workflowWithTopic
+
       graph1 <-  FlowExecutor(transactor, "Run jobs with signal")(workflowWithTopic)
       flow1 <- scheduler.runOne(graph1).start
 

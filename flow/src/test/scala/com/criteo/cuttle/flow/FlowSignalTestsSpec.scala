@@ -64,6 +64,7 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     val kafkaCf = KafkaConfig("signal_cuttle", "signals", List("localhost:9092"))
 
     import cats.implicits._
+    import scala.concurrent.duration._
 
     val program = for {
       transactor    <- xa
@@ -73,19 +74,19 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
       workflowWithTopic = simpleWorkflow(signalManager)
 
       graph1 <- FlowExecutor(transactor, "Run jobs with signal")(workflowWithTopic)
-      graph2 <- FlowExecutor(transactor, "Run jobs with signal")(workflowWithTopic)
+      graph2 <- FlowExecutor(transactor, "Run jobs with signal 2")(workflowWithTopic)
 
       flow1 <- scheduler.runOne(graph1).start
       flow2 <- scheduler.runOne(graph2).start
 
       runFlowAndStop = (flow1.join, flow2.join).parMapN { (resWorkflow1, resWorkflow2) =>
         (resWorkflow1, resWorkflow2)
-      }.flatMap { res => stopping.complete(()).map(_ => res)}
+      }.flatMap { res => stopping.complete(()).map(_ => res) }
 
       finalResult <- (runFlowAndStop,
             signalManager.broadcastTopic.interruptWhen(stopping.get.attempt).compile.drain,
-            signalManager.pushOne(graph2.workflowId, "step-one-bis").compile.drain,
-            signalManager.pushOne(graph1.workflowId, "step-one-bis").compile.drain)
+            fs2.Stream.awakeEvery[IO](4 seconds).head.compile.drain *> signalManager.pushOne(graph2.workflowId, "step-one-bis").compile.drain,
+            fs2.Stream.awakeEvery[IO](8 seconds).head.compile.drain *> signalManager.pushOne(graph1.workflowId, "step-one-bis").compile.drain)
         .parMapN { (bothWorkflow, _, _, _) => bothWorkflow }
     } yield finalResult
 
@@ -111,7 +112,6 @@ class FlowSignalTestsSpec extends FunSuite with ITTestScheduling with Matchers {
     val aud2 = nodeFinalWF2.get.scheduling.inputs.hcursor.downField("aud").as[String].isRight
 
     assert(aud1 && aud2)
-
   }
 
 }

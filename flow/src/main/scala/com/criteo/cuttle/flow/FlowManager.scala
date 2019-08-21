@@ -11,13 +11,23 @@ import com.criteo.cuttle.flow.FlowSchedulerUtils.JobState
 class FlowManager(semaphore: Semaphore[IO], xa : XA,
                   signalManager : SignalManager[String, _])(implicit F : Concurrent[IO], logger : Logger) {
 
+
+
+  def reRunWorkflow(graph : FlowExecutor) = for {
+    _ <- signalManager.newTopic(graph.workflowId)
+    executionLog <- graph.parStart(semaphore)
+    _ <- signalManager.removeTopic(graph.workflowId)
+  } yield executionLog
+
   /**
     * Run a single job
     * @param jobId
     * @param graph
     * @return
     */
-  def runJobFromFlow(jobId : String, graph : FlowExecutor): IO[Either[Throwable, (FlowWorkflow, JobState)]] = {
+  def runJobFromFlow(jobId : String,
+                     graph : FlowExecutor,
+                     initialInput : Option[io.circe.Json] = None): IO[Either[Throwable, (FlowWorkflow, JobState)]] = {
     val job = graph.jobs.vertices.find(j => j.id == jobId)
     if (job.isEmpty) IO.pure(Left(new Throwable(s"$jobId does not exist")))
 
@@ -30,12 +40,10 @@ class FlowManager(semaphore: Semaphore[IO], xa : XA,
 
 
   /**
-    * @deprecated
-    *
-    * @param jobId
-    * @param workflowId
-    * @param graph
-    * @param initialInput
+    * @param jobId the id of the job
+    * @param workflowId the workflow id used in the database
+    * @param graph the workflow to identify the side effect to run
+    * @param initialInput Json to used in input will be merged with outputs from previous jobs
     * @return
     */
   def runJobFromWfId(jobId : String,

@@ -4,12 +4,11 @@ import java.time.Instant
 import java.util.UUID
 
 import cats.effect.{Concurrent, IO}
-import cats.effect.concurrent.Semaphore
+import cats.effect.concurrent.{Ref, Semaphore}
 import com.criteo.cuttle.flow.FlowSchedulerUtils.{FlowJob, JobState}
 import com.criteo.cuttle.{ExecutionPlatform, Executor, Logger, XA, platforms}
 import com.criteo.cuttle.flow.{Database => FlowDB}
-import com.criteo.cuttle.platforms.local.LocalPlatform
-
+import cats.implicits._
 import scala.concurrent.duration.Duration
 
 /**
@@ -24,31 +23,31 @@ import scala.concurrent.duration.Duration
 class FlowExecutor(xa : XA,
                    executor : Executor[FlowScheduling],
                    logRetention : Option[Duration],
+                   platforms: Seq[ExecutionPlatform],
                    val workflowId: String,
                    val description: String,
-                   platforms: Seq[ExecutionPlatform],
                    val jobs: FlowWorkflow,
-                   logger: Logger)(implicit C: Concurrent[IO]) {
+                   val workflowRef : Ref[IO, FlowWorkflow],
+                   val stateRef : Ref[IO, JobState])(implicit C: Concurrent[IO], logger: Logger) {
   import doobie.implicits._
   import cats.effect.concurrent.Ref
 
+
   /**
     Start the workflow and execute with the given environment.
-    Create the transactor to the database, and update database.
+    Create the transactor to the database and serialize the graph if it does not exist.
     This method is used when you want to run only one workflow at a time.
     */
   def start: IO[Either[Throwable, (FlowWorkflow, JobState)]] =
     for {
-      refState   <- Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState])
-      scheduler  =  FlowScheduler(logger, workflowId, refState, jobs.hash)
+      scheduler  <-  IO.pure(FlowScheduler(logger, workflowId, stateRef, workflowRef, jobs.hash))
       serialize  <- FlowDB.serializeGraph(jobs).value.transact(xa)
       done <- serialize match {
         case Left(e) =>
           logger.error(e.getMessage).map(_ =>  Left(e))
         case Right(_) =>
-          logger.info(s"Start workflow $workflowId").flatMap { _ =>
-            scheduler.executeWorkflow(jobs, executor, xa, logger).value
-          }
+          logger.info(s"Start workflow $workflowId") *>
+            scheduler.executeWorkflow(executor, xa, logger).value
       }
     } yield done
 
@@ -61,8 +60,7 @@ class FlowExecutor(xa : XA,
     */
   def parStart(semaphore : Semaphore[IO]): IO[Either[Throwable, (FlowWorkflow, JobState)]] =
     for {
-      refState   <- Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState])
-      scheduler  =  FlowScheduler(logger, workflowId, refState, jobs.hash)
+      scheduler  <-  IO.pure(FlowScheduler(logger, workflowId, stateRef, workflowRef, jobs.hash))
       _ <- semaphore.acquire
       serialize  <- FlowDB.serializeGraph(jobs).value.transact(xa)
       _ <- semaphore.release
@@ -70,10 +68,10 @@ class FlowExecutor(xa : XA,
         case Left(e) =>
           logger.error(e.getMessage).map(_ =>  Left(e))
         case Right(_) =>
-          logger.info(s"Start workflow $workflowId").flatMap { _ =>
-            scheduler.executeWorkflow(jobs, executor, xa, logger).value
-          }
+          logger.info(s"Start workflow $workflowId") *>
+            scheduler.executeWorkflow(executor, xa, logger).value
       }
+
     } yield done
 
 
@@ -87,20 +85,21 @@ class FlowExecutor(xa : XA,
     val job = jobs.vertices.find(j => j.id == jobId)
     if (job.isEmpty) IO.pure(Left(new Throwable(s"$jobId does not exist")))
     else for {
-      refState    <- Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState])
-      serialize  <- FlowDB.serializeGraph(jobs).value.transact(xa)
-      scheduler   =  FlowScheduler(logger, workflowId, refState, jobs.hash)
-
+      scheduler   <- IO.pure(FlowScheduler(logger, workflowId, stateRef, workflowRef, jobs.hash))
+      serialize   <- FlowDB.serializeGraph(jobs).value.transact(xa)
+      tmpSave <- scheduler.refWorkflow.get
       done <- serialize match {
         case Left(e) =>
           logger.error(e.getMessage).map(_ =>  Left(e))
         case Right(_) =>
-          logger.info(s"Start workflow $workflowId with job ${job.get.id}").flatMap { _ =>
-            scheduler.executeWorkflow(job.get, executor, xa, logger).value
-          }
+          logger.info(s"Start workflow $workflowId with job ${job.get.id}") *>
+            scheduler.refWorkflow.set(job.get) *>
+            scheduler.executeWorkflow(executor, xa, logger).value
       }
+      _ <- scheduler.refWorkflow.set(tmpSave)
     } yield done
   }
+
 
 }
 
@@ -128,8 +127,10 @@ object FlowExecutor {
             logsRetention : Option[Duration] = None)
            (jobs: FlowWorkflow)
            (implicit logger: Logger, C : Concurrent[IO]): IO[FlowExecutor] = for {
+    wf <- Ref.of[IO, FlowWorkflow](jobs)
+    state <- Ref.of[IO, JobState](Map.empty[FlowJob, JobFlowState])
     executor <- IO.pure(new Executor[FlowScheduling](platforms, xa, logger, workflowID, logsRetention)(None))
-    flow     <- IO.pure(new FlowExecutor(xa, executor, logsRetention, workflowID, description, platforms, jobs, logger))
+    flow     <- IO.pure(new FlowExecutor(xa, executor, logsRetention, platforms, workflowID, description, jobs, wf, state))
   } yield flow
 
 }

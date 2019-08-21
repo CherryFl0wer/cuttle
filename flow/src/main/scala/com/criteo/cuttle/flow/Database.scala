@@ -73,8 +73,7 @@ private[flow] object Database {
         outputs JSONB NULL,
         PRIMARY KEY(workflow_id, step_id)
       );
-      CREATE INDEX flow_results_workflowid ON flow_results (workflow_id);
-      CREATE INDEX flow_results_stepid ON flow_results (step_id);
+      CREATE UNIQUE INDEX flow_results_step_and_id ON flow_results (workflow_id, step_id);
 
       CREATE TABLE flow_contexts (
         id          TEXT NOT NULL,
@@ -95,16 +94,18 @@ private[flow] object Database {
 
   val doSchemaUpdates : ConnectionIO[Unit] = CriteoCoreUtils.updateSchema("flow", schema)
 
-  def insertResult(wfHash : String, wfId : String, stepId : String, inputs : Json, outputs : Json): doobie.ConnectionIO[Int] =
-    sql"""
-          INSERT INTO flow_results (workflow_id, from_graph, step_id, inputs, outputs)
-          VALUES(${wfId}, ${wfHash}, ${stepId}, ${inputs}, ${outputs})
-      """.update.run
+  def insertResult(wfHash : String, wfId : String, stepId : String, inputs : Json, outputs : Json): doobie.ConnectionIO[Int] = sql"""
+          INSERT INTO flow_results(workflow_id, from_graph, step_id, inputs, outputs)
+          VALUES($wfId, $wfHash, $stepId, $inputs, $outputs)
+          ON CONFLICT (workflow_id, step_id)
+          DO UPDATE SET inputs = EXCLUDED.inputs, outputs = EXCLUDED.outputs
+          WHERE flow_results.workflow_id = $wfId AND flow_results.step_id = $stepId
+          """.update.run
 
 
    def retrieveWorkflowResults(wfId : String): doobie.ConnectionIO[List[(String, Json)]] =
      sql"""
-            SELECT step_id, outputs FROM flow_results WHERE workflow_id = ${wfId}
+            SELECT step_id, outputs FROM flow_results WHERE workflow_id = $wfId
     """.query[(String, Json)].to[List]
 
   /**
