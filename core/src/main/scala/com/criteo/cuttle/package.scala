@@ -29,19 +29,30 @@ package cuttle {
     */
   case object Finished extends Completed
 
+
+  /**
+    * Object to use to sucessfully fail a job side effect.
+    *
+    * {{{
+    *   Future.successful(Fail)
+    * }}}
+    */
+  case object Fail extends Completed
+
   /**
     * Object to use to successfully complete a job side effect and dispatch json to
     * children's node.
-    * @param res
+    * @param res result in Json
     */
   case class Output(res : Json) extends Completed
 
   /**
     * Object to use to fail a job's side effect and dispatch json to
     * children's error node.
-    * @param err
+    * @param err error in Json
     */
   case class OutputErr(err : Json) extends  Completed
+
 
 }
 

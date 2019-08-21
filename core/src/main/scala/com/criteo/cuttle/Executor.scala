@@ -152,6 +152,7 @@ private[cuttle] object ExecutionLog {
   */
 object ExecutionCancelled extends RuntimeException("Execution cancelled")
 
+
 /**
   * Allows to unsubscribe a cancel listener. It is sometimes useful for long running executions to dettach
   * the cancel listener to not leak any memory.
@@ -439,8 +440,7 @@ class Executor[S <: Scheduling] private[cuttle] (
   xa: XA,
   logger: Logger,
   val projectName: String,
-  logsRetention: Option[ScalaDuration] = None)(implicit retryStrategy: Option[RetryStrategy])
-    extends MetricProvider[S]  {
+  logsRetention: Option[ScalaDuration] = None)(implicit retryStrategy: Option[RetryStrategy]) {
 
   import ExecutionStatus._
   import Implicits.sideEffectThreadPool
@@ -736,7 +736,7 @@ class Executor[S <: Scheduling] private[cuttle] (
     promise.completeWith(
       (Try(execution.run()) match { // Running side effect
         case Success(f) => f
-        case Failure(e) => if (execution.forcedSuccess.single()) Future.successful(Finished) else Future.failed(e)
+        case Failure(e) => Future.failed(e)
       }).andThen {
           case Success(_) =>
             execution.streams.debug(s"Execution successful")
@@ -979,115 +979,4 @@ class Executor[S <: Scheduling] private[cuttle] (
     Try(queries.healthCheck.transact(xa).unsafeRunSync)
 
   private case class ExecutionInfo(jobId: String, tags: Set[String], status: ExecutionStatus)
-
-  /**
-    * @param jobs list of jobs whose metrics will be retrieved
-    * @param getStateAtomic Atomically get executor stats. Given a list of jobs ids, returns how much
-    *                       ((running, waiting), paused, failing) jobs are in concrete states
-    * @param runningExecutions executions which are either either running or waiting for a free thread to start
-    *                          @param pausedExecutions
-    */
-  private[cuttle] def getMetrics(jobs: Set[Job[S]])(
-    getStateAtomic: Set[String] => ((Int, Int), Int),
-    runningExecutions: Seq[(Execution[S], ExecutionStatus)],
-    failingExecutions: Seq[Execution[S]]
-  ): Seq[Metric] = {
-    val jobIds = jobs.map(_.id)
-
-    val ((runningCount, waitingCount), failingCount) = getStateAtomic(jobIds)
-    val statMetrics = Seq(
-      Gauge("cuttle_scheduler_stat_count", "The number of jobs that we have in concrete states")
-        .labeled("type" -> "running", runningCount)
-        .labeled("type" -> "waiting", waitingCount)
-        .labeled("type" -> "failing", failingCount)
-    )
-
-    val (running: Seq[ExecutionInfo], waiting: Seq[ExecutionInfo]) = runningExecutions
-      .map {
-        case (exec, status) =>
-          ExecutionInfo(exec.job.id, exec.job.tags.map(_.name), status)
-      }
-      .partition { execution =>
-        execution.status == ExecutionStatus.ExecutionRunning
-      }
-
-    val failing: Seq[ExecutionInfo] = failingExecutions.map { exec =>
-      ExecutionInfo(exec.job.id, exec.job.tags.map(_.name), ExecutionStatus.ExecutionThrottled)
-    }
-
-    statMetrics ++
-      Seq(getMetricsByTag(running, waiting, failing)) ++
-      Seq(getMetricsByJob(running, waiting, failing)) ++
-      Seq(
-        executionsCounters
-          .single()
-          .withDefaultsFor({
-            for {
-              job <- jobs.toSeq
-              outcome <- Seq("success", "failure")
-            } yield
-              Set(("job_id", job.id), ("type", outcome)) ++ (if (job.tags.nonEmpty)
-                                                               Set("tags" -> job.tags.map(_.name).mkString(","))
-                                                             else Nil)
-          }))
-  }
-
-  /**
-    * @param jobs the list of jobs ids
-    */
-  override def getMetrics(jobIds: Set[String], jobs: Workload[S]): Seq[Metric] =
-    atomic { implicit txn =>
-      getMetrics(jobs.all.filter(j => jobIds.contains(j.id)))(
-        getStateAtomic,
-        runningExecutions,
-        allFailingExecutions
-      )
-    }
-
-  private def getMetricsByTag(running: Seq[ExecutionInfo],
-                              waiting: Seq[ExecutionInfo],
-                              failing: Seq[ExecutionInfo]): Metrics.Metric =
-    (// Explode by tag
-    running
-      .flatMap { info =>
-        info.tags
-      }
-      .groupBy(identity)
-      .mapValues("running" -> _.size)
-      .toList ++
-      waiting
-        .flatMap { info =>
-          info.tags
-        }
-        .groupBy(identity)
-        .mapValues("waiting" -> _.size)
-        .toList ++
-      failing
-        .flatMap { info =>
-          info.tags
-        }
-        .groupBy(identity)
-        .mapValues("failing" -> _.size)
-        .toList).foldLeft(
-      Gauge("cuttle_scheduler_stat_count_by_tag", "The number of executions that we have in concrete states by tag")
-    ) {
-      case (gauge, (tag, (status, count))) =>
-        gauge.labeled(Set("tag" -> tag, "type" -> status), count)
-      case (gauge, _) =>
-        gauge
-    }
-
-  private def getMetricsByJob(running: Seq[ExecutionInfo],
-                              waiting: Seq[ExecutionInfo],
-                              failing: Seq[ExecutionInfo]): Metrics.Metric =
-    (
-      running.groupBy(_.jobId).mapValues("running" -> _.size).toList ++
-        waiting.groupBy(_.jobId).mapValues("waiting" -> _.size).toList ++
-        failing.groupBy(_.jobId).mapValues("failing" -> _.size).toList
-    ).foldLeft(
-      Gauge("cuttle_scheduler_stat_count_by_job", "The number of executions that we have in concrete states by job")
-    ) {
-      case (gauge, (jobId, (status, count))) =>
-        gauge.labeled(Set("job" -> jobId, "type" -> status), count)
-    }
 }

@@ -1,5 +1,7 @@
 package com.criteo.cuttle.platforms
 
+import com.criteo.cuttle.Scheduling
+
 /** Allow to fork process locally in a managed way.
   *
   * It provides the `exec` interpolator that you can use to fork shell scripts:
@@ -27,7 +29,7 @@ package object local {
 
   /** The __exec__ string interpolation. */
   implicit class InlineCommands(val sc: StringContext) extends AnyVal {
-    def exec(args: Any*) =
+    def bash(args: Any*) =
       new LocalProcess(sc.parts.zipAll(args, "", "").map { case (a, b) => a + b }.mkString.stripMargin)
   }
 

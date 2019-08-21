@@ -51,6 +51,8 @@ object FS2SignalScript extends IOApp {
       val in = e.job.scheduling.inputs
       val x = e.optic.result.string.getOption(in).fold("No value")(identity) + " got it"
       val tenerifie = e.optic.tenerifie.string.getOption(in).fold("No value")(identity)
+
+
       IO(Output(Json.obj("exploded" -> x.asJson, "possible" -> tenerifie.asJson))).unsafeToFuture()
     }
 
