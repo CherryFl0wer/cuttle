@@ -3,6 +3,7 @@ package com.criteo.cuttle.flow
 import cats.effect.IO
 import com.criteo.cuttle.{Scheduling, Workload}
 import com.criteo.cuttle.flow.FlowSchedulerUtils._
+import com.criteo.cuttle.flow.utils.{Digraph, JobUtils}
 import io.circe._
 
 
@@ -174,6 +175,25 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     }
   }
 
+
+
+  def renderDot = {
+    val graph = new Digraph(s"G$hash")
+    graph.body += "rankdir=LR"
+
+    graph.attr("node", scala.collection.mutable.Map("style" -> "rounded"))
+    vertices.foreach(j =>  graph.node(JobUtils.formatName(j.id)))
+    edges.foreach { case (child, parent, kind) =>
+      graph.edge(
+        JobUtils.formatName(child.id),
+        JobUtils.formatName(parent.id),
+        label = kind.toString,
+        attrs = scala.collection.mutable.Map("color" -> (if (kind == RoutingKind.Success) "green" else "red"))
+      )
+    }
+
+    graph.view("dot", "png", s"graph_$hash.gv", directory = ".", cleanUp = true)
+  }
 
   // Inheriting from trait
 

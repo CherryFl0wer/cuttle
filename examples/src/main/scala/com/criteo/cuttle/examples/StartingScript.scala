@@ -7,7 +7,7 @@ import com.criteo.cuttle.flow.FlowSchedulerUtils.WFSignalBuilder
 import com.criteo.cuttle.{DatabaseConfig, Finished, Job, Output, OutputErr}
 import com.criteo.cuttle.flow.{FlowExecutor, FlowManager, FlowScheduling, FlowWorkflow}
 import com.criteo.cuttle.flow.signals._
-import com.criteo.cuttle.flow.utils.KafkaConfig
+import com.criteo.cuttle.flow.utils.{Digraph, KafkaConfig}
 import io.circe.Json
 
 
@@ -62,7 +62,7 @@ object StartingScript extends IOApp {
   import com.criteo.cuttle.{ Database => CoreDB }
   def run(args: List[String]): IO[ExitCode] = {
 
-    val kafkaConfig = KafkaConfig("signal_cuttle", "cuttlemsg", List("localhost:9092"))
+   val kafkaConfig = KafkaConfig("signal_cuttle", "cuttlemsg", List("localhost:9092"))
 
     import cats.implicits._
 
@@ -73,8 +73,10 @@ object StartingScript extends IOApp {
       scheduler     <- FlowManager(transactor, signalManager)
       workflowWithTopic = workflow1(signalManager)
 
-
+      _ <- IO.delay(workflowWithTopic.renderDot)
+/*
       graph1 <-  FlowExecutor(transactor, "Run jobs with signal")(workflowWithTopic)
+
       flow1 <- scheduler.runOne(graph1).start
 
       runFlowAndStop = flow1.join.flatMap { res => stopping.complete(()).map(_ => res) }
@@ -93,11 +95,12 @@ object StartingScript extends IOApp {
       runStepTwoAgain <- scheduler.runJobFromWfId("step-two", graph1.workflowId, workflowWithTopic, Some(Json.obj(
         "tenerifie" -> "sea".asJson,
         "calcul" -> 4.asJson
-      )))
+      )))*/
 
     } yield {
-      if (runStepTwoAgain.isLeft) ExitCode.Error
-      else ExitCode.Success
+      /*if (runStepTwoAgain.isLeft) ExitCode.Error
+      else ExitCode.Success*/
+      ExitCode.Success
     }
 
     program

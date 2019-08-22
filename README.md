@@ -248,8 +248,12 @@ Possible `Future[Completed]` for the job are :
 - `Fail` : Just fail the job
 
 
-###Examples
+###Examples and more
+
 See the folder `examples` or `tests` in `flow` module for more example.
+
+You can render the graph by installing graphviz `brew install graphviz`
+and then run the method `renderDot` from you `FlowWorkflow` object to get a png file of your graph.
 # Documentation
 
 The [API documentation](https://criteo.github.io/cuttle/api/index.html) is the main reference for Scala programmers.

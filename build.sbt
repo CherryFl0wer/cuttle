@@ -52,15 +52,7 @@ lazy val commonSettings = Seq(
       Opts.resolver.sonatypeSnapshots
     else
       Opts.resolver.sonatypeStaging
-  ),
-  // Useful to run flakey tests
-  commands += Command.single("repeat") { (state, arg) =>
-    arg :: s"repeat $arg" :: state
-  },
-  // Run an example in another JVM, and quit on key press
-  commands += Command.single("example") { (state, arg) =>
-    s"examples/test:runMain com.criteo.cuttle.examples.TestExample $arg" :: state
-  }
+  )
 )
 
 def removeDependencies(groups: String*)(xml: scala.xml.Node) = {
@@ -70,7 +62,7 @@ def removeDependencies(groups: String*)(xml: scala.xml.Node) = {
     new RewriteRule {
       override def transform(n: Node): Seq[Node] = n match {
         case dependency @ Elem(_, "dependency", _, _, _*) =>
-          if (dependency.child.collect { case e: Elem => e }.headOption.exists { e =>
+          if (dependency.child.collectFirst { case e: Elem => e }.exists { e =>
                 groups.exists(group => e.toString == s"<groupId>$group</groupId>")
               }) Nil
           else dependency

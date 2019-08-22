@@ -100,7 +100,6 @@ class FlowExecutor(xa : XA,
     } yield done
   }
 
-
 }
 
 object FlowExecutor {
