@@ -73,8 +73,7 @@ private[flow] object Database {
         outputs JSONB NULL,
         PRIMARY KEY(workflow_id, step_id)
       );
-      CREATE INDEX flow_results_workflowid ON flow_results (workflow_id);
-      CREATE INDEX flow_results_stepid ON flow_results (step_id);
+      CREATE UNIQUE INDEX flow_results_step_and_id ON flow_results (workflow_id, step_id);
 
       CREATE TABLE flow_contexts (
         id          TEXT NOT NULL,
@@ -93,22 +92,21 @@ private[flow] object Database {
     NoUpdate
   )
 
-  val doSchemaUpdates: ConnectionIO[Unit] = CriteoCoreUtils.updateSchema("flow", schema)
+  val doSchemaUpdates : ConnectionIO[Unit] = CriteoCoreUtils.updateSchema("flow", schema)
+
+  def insertResult(wfHash : String, wfId : String, stepId : String, inputs : Json, outputs : Json): doobie.ConnectionIO[Int] = sql"""
+          INSERT INTO flow_results(workflow_id, from_graph, step_id, inputs, outputs)
+          VALUES($wfId, $wfHash, $stepId, $inputs, $outputs)
+          ON CONFLICT (workflow_id, step_id)
+          DO UPDATE SET inputs = EXCLUDED.inputs, outputs = EXCLUDED.outputs
+          WHERE flow_results.workflow_id = $wfId AND flow_results.step_id = $stepId
+          """.update.run
 
 
-  def insertResult(wfHash : String, wfId : String, stepId : String, inputs : Json, outputs : Json) =
-    sql"""
-          INSERT INTO flow_results (workflow_id, from_graph, step_id, inputs, outputs)
-          VALUES(${wfId}, ${wfHash}, ${stepId}, ${inputs}, ${outputs})
-      """.update.run
-
-  // TODO : Maybe return list or one response.
-  def retrieveResult(wfId : String, stepId : String) =
-    OptionT {
-      sql"""
-            SELECT result FROM flow_results WHERE workflow_id = ${wfId} AND step_id = ${stepId} ORDER BY date LIMIT 1
-    """.query[Json].option
-    }.value
+   def retrieveWorkflowResults(wfId : String): doobie.ConnectionIO[List[(String, Json)]] =
+     sql"""
+            SELECT step_id, outputs FROM flow_results WHERE workflow_id = $wfId
+    """.query[(String, Json)].to[List]
 
   /**
     * Decode the state
@@ -145,28 +143,25 @@ private[flow] object Database {
     }.map(json => dbStateDecoder(json).get).value
   }
 
-  def serializeState(workflowid : String, state: JobState, retention: Option[Duration]): ConnectionIO[Int] = {
+  def serializeState(workflowId : String, state: JobState, retention: Option[Duration]) = {
 
     val now = Instant.now()
-    val cleanStateBefore = retention.map { duration =>
-      if (duration.toSeconds <= 0)
-        sys.error(s"State retention is badly configured: ${duration}")
-      else
-        now.minusSeconds(duration.toSeconds)
-    }
     val stateJson = dbStateEncoder(state)
 
-     for {
-      // Apply state retention if needed
-      _ <- cleanStateBefore
-        .map { t =>
-          sql"DELETE FROM flow_state where date < ${t}".update.run
-        }
-        .getOrElse(NoUpdate)
-      // Insert the latest state
-      x <- sql"INSERT INTO flow_state (workflow_id, state, date) VALUES (${workflowid}, ${stateJson}, ${now})".update.run
-    } yield x
+    val stateRetention = retention match {
+      case Some(t) => for {
+        instant <- EitherT.cond[ConnectionIO](t.toSeconds <= 0L, now.minusSeconds(t.toSeconds), new Throwable("State retention is badly configured"))
+        _       <- EitherT(sql"DELETE FROM flow_state where date < $instant".update.run.attempt)
+      } yield ()
+      case _ => EitherT.rightT[ConnectionIO, Throwable](())
+    }
 
+    for {
+      // Apply state retention if needed
+       _ <- stateRetention
+      // Insert the latest state
+       _ <- EitherT(sql"INSERT INTO flow_state (workflow_id, state, date) VALUES ($workflowId, $stateJson, $now)".update.run.attempt)
+    } yield ()
   }
 
 
@@ -189,7 +184,7 @@ private[flow] object Database {
     * @param workflow
     * @return the hash of the workflow
     */
-  def serializeGraph(workflow: FlowWorkflow) = {
+  def serializeGraph(workflow: FlowWorkflow): EitherT[doobie.ConnectionIO, Throwable, Unit] = {
     val h = workflow.hash.toString
     val serializedGraph = workflow.asJson
     for {

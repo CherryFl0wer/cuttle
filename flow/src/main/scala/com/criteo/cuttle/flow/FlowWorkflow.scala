@@ -1,7 +1,9 @@
 package com.criteo.cuttle.flow
 
+import cats.effect.IO
 import com.criteo.cuttle.{Scheduling, Workload}
 import com.criteo.cuttle.flow.FlowSchedulerUtils._
+import com.criteo.cuttle.flow.utils.{Digraph, JobUtils}
 import io.circe._
 
 
@@ -32,6 +34,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     val nodes = edges.map { case (parent, _, _) => parent }
     vertices.filter(!nodes.contains(_))
   }
+
 
   // Returns a list of jobs in the workflow sorted topologically, using Kahn's algorithm. At the
   // same time checks that there is no cycle.
@@ -65,6 +68,11 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     .filter { case (current, _, route) => current == job && route == kind }
     .map { case (_, child, _) => child }
 
+  private[cuttle] def parentsFromRoute(job : FlowJob, kind: RoutingKind.Routing)  = edges
+    .filter { case (_, current, route) => current == job && route == kind }
+    .map { case (parent, _, _) => parent }
+
+
   private[cuttle] def childsOf(vertice : FlowJob) : Set[FlowJob] = {
     if (leaves.contains(vertice)) Set.empty
     else edges.filter { case (current, _, _) => current == vertice }.map { case (_, child, _) => child }
@@ -78,11 +86,28 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     }
   }
 
+  /**
+    *  Return an hash based on the edges (job id, job id, route) of this workflow
+    *  using MurmurHash3 from std lib
+    */
+  lazy val hash : Int =  Math.abs(scala.util.hashing.MurmurHash3.setHash(edges.map(e => (e._1.id, e._2.id, e._3))))
+
+
+  def verticesFrom(kind: RoutingKind.Routing): Set[FlowJob] = edges.foldLeft(Set.empty[FlowJob]) {
+    case (acc, (child, parent, route)) => if (route == kind) (acc + child) + parent else acc
+  }
+
+  def get(jobId : String): Option[FlowJob] = vertices.find(j => j.id == jobId)
 
   /**
-    *  Return an hash based on the edges of the workflow using MurmurHash3 from std lib
+    * Replace a job with a new job (must have same id)
+    * if the job does not exist return this
+    * otherwise new workflow w
+    * @param job the new job
+    * @return
     */
-    lazy val hash =  Math.abs(scala.util.hashing.MurmurHash3.arrayHash(edges.toArray))
+  def replace(job : FlowJob) : FlowWorkflow = FlowWorkflow.replace(this, job)
+
 
   /**
     * Compose a [[FlowWorkflow]] with another [[FlowWorkflow]] but without any
@@ -93,11 +118,11 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
 
   def &&(other : FlowWorkflow) : FlowWorkflow = and(other)
 
-  def and(otherWorflow: FlowWorkflow): FlowWorkflow = {
+  def and(otherWorkflow: FlowWorkflow): FlowWorkflow = {
     val leftWorkflow = this
     new FlowWorkflow {
-      val vertices = leftWorkflow.vertices ++ otherWorflow.vertices
-      val edges = leftWorkflow.edges ++ otherWorflow.edges
+      val vertices = leftWorkflow.vertices ++ otherWorkflow.vertices
+      val edges = leftWorkflow.edges ++ otherWorkflow.edges
     }
   }
 
@@ -109,7 +134,7 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
     */
 
   def -->(success : FlowWorkflow) : FlowWorkflow = andThen((success, RoutingKind.Success))
-  def andThen(rightOperand : (FlowWorkflow, RoutingKind.Routing)): FlowWorkflow = {
+  private def andThen(rightOperand : (FlowWorkflow, RoutingKind.Routing)): FlowWorkflow = {
 
     val leftWorkflow = this
     val (rightWorkflow, kindRoute) = rightOperand
@@ -151,11 +176,31 @@ trait FlowWorkflow extends Workload[FlowScheduling] {
   }
 
 
+
+  def renderDot = {
+    val graph = new Digraph(s"G$hash")
+    graph.body += "rankdir=LR"
+
+    graph.attr("node", scala.collection.mutable.Map("style" -> "rounded"))
+    vertices.foreach(j =>  graph.node(JobUtils.formatName(j.id)))
+    edges.foreach { case (child, parent, kind) =>
+      graph.edge(
+        JobUtils.formatName(child.id),
+        JobUtils.formatName(parent.id),
+        label = kind.toString,
+        attrs = scala.collection.mutable.Map("color" -> (if (kind == RoutingKind.Success) "green" else "red"))
+      )
+    }
+
+    graph.view("dot", "png", s"graph_$hash.gv", directory = ".", cleanUp = true)
+  }
+
   // Inheriting from trait
 
   def all = vertices
 
   override def asJson(implicit se : Encoder[FlowJob]) = workflowEncoder(se)(this)
+
 }
 
 /** Utilities for [[FlowWorkflow]]. */
@@ -179,35 +224,41 @@ object FlowWorkflow {
     */
   def without(wf: FlowWorkflow, jobs: Set[FlowJob]): FlowWorkflow = {
     if (jobs.isEmpty)
-      wf
+      return wf
 
-    val newVertices = wf.vertices -- jobs
+    val jobsId = jobs.map(_.id)
+    val newVertices = wf.vertices.filterNot(j => jobsId.contains(j.id))
     val newEdges = wf.edges.filterNot(p => jobs.contains(p._1))
 
     new FlowWorkflow {
       def vertices = newVertices
-
       def edges = newEdges
     }
   }
 
 
-  /** *
+  /**
     * Replace the job
     *
-    * @param wf
-    * @param jobs
-    * @return a new workflow without the `jobs`
+    * @param wf the initial workflow
+    * @param job the job to replace
+    * @return a new workflow with the new job instead
     */
   def replace(wf: FlowWorkflow, job: FlowJob): FlowWorkflow = {
 
+    val exist = wf.vertices.find(j => j.id == job.id)
+
+    if (exist.isEmpty) return wf
+
+    val newEdgesFrom = wf.edges.filter(p => p._1.id == job.id).map(p => (job, p._2, p._3))
+    val newEdgesTo   = wf.edges.filter(p => p._2.id == job.id).map(p => (p._1, job, p._3))
+    val wfWithoutEdgeJob = wf.edges.filterNot(p => p._1.id == job.id || p._2.id == job.id)
+
     val newVertices = wf.vertices.filterNot(p => p.id == job.id) + job
-    val newEdgesFrom = wf.edges.filter(p => p._1 == job).map(p => (job, p._2, p._3))
-    val newEdgesTo = wf.edges.filter(p => p._2 == job).map(p => (p._1, job, p._3))
-    val wfWithoutEdgeJob = wf.edges.filterNot(p => p._1 == job || p._2 == job)
+    val newEdges =  wfWithoutEdgeJob ++ newEdgesFrom ++ newEdgesTo
     new FlowWorkflow {
       def vertices = newVertices
-      def edges = wfWithoutEdgeJob ++ newEdgesFrom ++ newEdgesTo
+      def edges = newEdges
     }
   }
 
@@ -219,12 +270,12 @@ object FlowWorkflow {
     */
   def withKind(wf : FlowWorkflow, kind : RoutingKind.Routing) = {
 
-    val setOfVertice = wf.edges.foldLeft(Set.empty[FlowJob]) { case (acc, edge) =>
+    val setOfVertice = wf.edges.foldLeft(wf.vertices) { case (acc, edge) =>
       val (parent, child, route) = edge
       if (route == kind)
         acc + parent + child
       else
-        acc + parent
+        (acc + parent) - child
     }
 
     val newVertices = if (setOfVertice.isEmpty) wf.roots else setOfVertice

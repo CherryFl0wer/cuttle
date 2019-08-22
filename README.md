@@ -51,14 +51,209 @@ The way to manage external resources in cuttle is via [ExecutionPlatform](https:
 This is necessary because potentially thousands of concurrent executions can happen in cuttle. These executions will fight for shared resources via these execution platforms. Usually a platform will use a priority queue to prioritize access to these shared resources, and the priority is based on the [SchedulingContext](https://criteo.github.io/cuttle/api/com/criteo/cuttle/SchedulingContext.html) of each execution (_so the executions with highest priority get access to the shared resources first_). For example the [TimeSeriesContext](https://criteo.github.io/cuttle/api/com/criteo/cuttle/timeseries/TimeSeriesContext.html) defines its [Ordering](https://www.scala-lang.org/api/current/scala/math/Ordering.html) in such way that oldest partitions take priority.
 
 ## Flow scheduling 
-Run a workflow 
+Flow scheduling is a sub api based on cuttle core API, the goal is to provide a DAG Workflow which use the Core Cuttle `Job`.
 
-TODO: 
+To declare a job : 
+```scala 
+val job1 = Job("job1", FlowScheduling()) { implicit execution => 
+    execution.streams.info("Just writing logged info in job execution");
+     
+    Future.successful(Finished); // Every job finish with a future
+}
+```
+### Simple example
 
-    * Start a specific job from the graph 
-    * Update Kafka Notifier with payload message
-    * Trigger kafka but directly into a running job
+The declaration of the dag is supposed to be simple, let's say we have 5 jobs declared like this code.
+```scala
+def myWorkflow : FlowWorkflow = ((job1 --> job2) && (job3 --> job4)) --> jobfinal
+```
+ Flow allow you to compose easily to help you recompose DAG, let's say you have `job1` and `job2` that work together and you want to reuse them in other DAG.
+ Then nothing block you to write them elsewhere and reuse them later and build them in subgraph.
+ ```scala
+ val subgraph1 = job1 --> job2
+ val subgraph2 = job3 --> job4
+ val finalDag = (subgraph1 && subgraph2) --> jobfinal
+ ```
+![alt Example 01](graphviz02.png)
 
+`job1` wil be executed in parallel with `job3` then if both successfully finished then `job2` and `job4` will run.
+`jobfinal` will run only if both subgraph are successfully runned. 
+
+### Path
+If one of the job fail it will wait before all the current job **Running** to finish and then handle the error by looking for
+an **error job** if there is no error job attached to the job **Failing** then it will just fail without recovery.
+
+Error Job are basically normal job just there are attached in a different manner onto the graph.
+
+If we want to attach errors job for the example 01 like this: 
+
+![alt Example 02](graphviz03.png)
+
+**You have to do this**
+```scala
+val subgraph1 = job1.error(errorJob1) --> job2.error(errorJob2)
+val subgraph2 = job3.error(errorJob3) --> job4.error(errorJob4)
+val finalDag : FlowWorkflow = (subgraph1 && subgraph2) --> jobfinal
+```
+Doing something like this is practical if you want an error management different from one job to another, but if you want
+to manage all error job the same way, then nothing block you to do this : 
+```scala
+val subgraph1 = job1.error(errorJob) --> job2.error(errorJob)
+val subgraph2 = job3.error(errorJob) --> job4.error(errorJob)
+val finalDag : FlowWorkflow = (subgraph1 && subgraph2) --> jobfinal
+```
+Looking like 
+![alt Example 03](graphviz04.png)
+Flow will rename the error job `job.id` with `${job.id}-from-${parent-job-id}` where *parent-job-id* is the id of 
+the job where it comes from, so `errorJob-from-job1`, `errorJob-from-job2` etc.
+
+### Scheduler
+The Workflow is backed by a scheduler that will read the DAG and run step by step the workflow. 
+You use the workflow by creating a `FlowExecutor` object and running one of its methods `start`, `parStart` or `runSingleJob`.
+
+It is advised to use `FlowManager` and passing the `FlowExecutor` to it, the reasons are : 
+1. `FlowManager` use a *Semaphore* to serialize his graph, if you run two workflow based on the same workflow it will avoid both workflow trying to serialize at the same time the same graph.
+2. `FlowManager` needs a `SignalManager` (explained after) to run, so if you use a signal system for your graph, it will create before execution and remove after execution the topic to received the signal for this particular **workflow execution**
+3.  It can also run a single job based on a **workflow execution id** so if you want to rerun a job from an old execution by providing the FlowWorkflow and others informations.
+
+**Note 1** : If your workflow has failed at one step for whatever reason, you can recall the method `start` 
+to rerun the workflow from last step failed. (One example in the test file `FlowTestsSpec.scala`).
+
+**Note 2** : If a job fail because of an exception, then it will just fail the job without triggering the exception, the exception will still be readable in the database execution table.
+### Signals 
+Flow provide a signal system based on Kafka and Fs2, the class `SignalManager` take a `KafkaConfig` and Key/Value Types matching the 
+pattern of Kafka Key/Value topic of Kafka. 
+
+`FlowManager` use `SignalManager[String, _]` to send message to workflow, it uses the Key of the Kafka Topic as *workflow id*
+and the value can be anything you want, in our case we have created a simple trait called `EventSignal` that can be used as a value
+in those Topic. 
+
+Here you have the only test made for signal in `FlowSignalTestsSpec.scala` 
+
+```scala
+    val simpleWorkflow : WFSignalBuilder[String] = topic : SignalManager => {
+
+      lazy val job1 =  Job("step-one", FlowScheduling(inputs = Json.obj("audience" -> "step is one".asJson))) { implicit e =>
+        IO(Finished).unsafeToFuture()
+      }
+
+      lazy val job1bis = Job("step-one-bis", FlowScheduling()) { implicit execution =>
+        execution.streams.info("On step bis")
+        val receive = for {
+          value <- topic
+            .subscribeOnTopic(execution.context.workflowId)
+            .evalTap(m => IO(println(s"received $m")))
+            .head
+            .compile
+            .last
+        } yield { Output(Json.obj("aud" -> s"step bis is done and received ${value.get._2}".asJson)) }
+
+        receive.unsafeToFuture()
+      }
+
+      lazy val job2 = Job("step-two", FlowScheduling(inputs = Json.obj("test" -> "final test".asJson))) { implicit e =>
+        val in = e.job.scheduling.inputs
+        val x = e.optic.aud.string.getOption(in).get + " passed to step three"
+        IO(Output(x.asJson)).unsafeToFuture()
+      }
+
+      (job1 && job1bis) --> job2
+    }
+
+    val kafkaCf = KafkaConfig("signal_cuttle", "signals", List("localhost:9092"))
+
+    import cats.implicits._
+    import scala.concurrent.duration._
+
+    val program = for {
+      transactor    <- xa
+      stopping      <- Deferred[IO, Unit]
+      signalManager <- SignalManager[String, String](kafkaCf)
+      scheduler     <- FlowManager(transactor, signalManager)
+      workflowWithTopic = simpleWorkflow(signalManager)
+
+      graph1 <- FlowExecutor(transactor, "Run jobs with signal")(workflowWithTopic)
+      graph2 <- FlowExecutor(transactor, "Run jobs with signal 2")(workflowWithTopic)
+
+      flow1 <- scheduler.runOne(graph1).start
+      flow2 <- scheduler.runOne(graph2).start
+
+      runFlowAndStop = (flow1.join, flow2.join).parMapN { (resWorkflow1, resWorkflow2) =>
+        (resWorkflow1, resWorkflow2)
+      }.flatMap { res => stopping.complete(()).map(_ => res) }
+
+      finalResult <- (runFlowAndStop,
+            signalManager.broadcastTopic.interruptWhen(stopping.get.attempt).compile.drain,
+            fs2.Stream.awakeEvery[IO](4 seconds).head.compile.drain *> signalManager.pushOne(graph2.workflowId, "step-one-bis").compile.drain,
+            fs2.Stream.awakeEvery[IO](8 seconds).head.compile.drain *> signalManager.pushOne(graph1.workflowId, "step-one-bis").compile.drain)
+        .parMapN { (bothWorkflow, _, _, _) => bothWorkflow }
+    } yield finalResult
+
+    val bothWorkflow = program.unsafeRunSync()
+```
+In this quit big example we declared a transcator postgresql, create a `Deferred` to stop the consumer when both workflow are done,
+and then create the signal manager based on a config Kafka.
+
+Then we use the type `WFSignalBuilder` which is basically a shortcut for `SignalManager[String, _] => FlowWorkflow`, meaning
+you create a workflow based on a Signal Manager. 
+
+We run two workflow based on the same workflow waiting for them to finish, these workflow are waiting for an Event corresponding to their workflow id.
+The Event in this case is a String but we don't care what value it is. 
+
+Then at the end we received the two workflow finished which means we receive either a *Left* which will be a **Throwable** or *Right* a tuple **(FlowWorkflow, JobState)**.
+The tuple is actually the workflow you give plus all the inputs and outputs of the job, so perfect is you want to
+see what happened to a job and the `JobState` which is a map of `FlowJob` and `JobFlowState` corresponding to the state of the job, 
+this is useful if you want to see if the job is running, failed or done. 
+
+### Input/Output 
+
+![alt Example Input output](graphviz05.png)
+
+Input and output are managed with Json, in this example, `Job1` might take default input in this case do it like this at the declaration
+```scala
+val job1 = Job("job1", FlowScheduling(inputs = Json.obj(...))) {...}
+```
+You can do it with outputs too but it is useless. 
+In the job you will be able to access to optic by doing this in the side effect : 
+(Exemple I/O)
+```scala
+val job1 = Job("job1", FlowScheduling(inputs = Json.obj("myvalue" -> "something".asJson))) { implicit e => 
+ val myvalue : Option[String] = e.optic.myvalue.string.getOption(e.job.scheduling.inputs)
+ // ...
+ Future.successful(Output(Json.obj("newval" -> "my new val".asJson)))
+}
+```
+*It is not really convenient to use Json but due to too much problem with Core Cuttle too implement static type then Json as been favoured.*
+
+`Job1` return obviously a Future but with an Output this time, therefore the scheduler will automatically
+take the json and put it as an input in the `Job2`, the value `newval` will be available in `Job2`. 
+
+**Note :** in the case of `jobfinal` it will receive both `Job2` and `Job4` outputs but if both of them have common value
+it will automatically create a map in the json where the key is the job id and the value corresponding to the value of this particular job. 
+If both job return a newval key ``jobfinal`` will receive in his inputs : 
+```json 
+"newval" : {
+    "job2" : "value_in_job2",
+    "job4" : "value_in_job4"
+}
+```
+**Note 2** : The key are formatted following the rules in the file `FlowSchedulerUtils.scala`
+
+**Note 3** : If you want to trigger an error job but still want him to send data then you can use `OutputErr(data : io.circe.Json)`
+
+Possible `Future[Completed]` for the job are : 
+- `Finished` : Is like `Unit`, a success but nothing to return
+- `Output(data : io.circe.Json)` : Return a json and successfully finish the job
+- `OutputErr(data : io.circe.Json)` : Fail the job and return json
+- `Fail` : Just fail the job
+
+
+###Examples and more
+
+See the folder `examples` or `tests` in `flow` module for more example.
+
+You can render the graph by installing graphviz `brew install graphviz`
+and then run the method `renderDot` from you `FlowWorkflow` object to get a png file of your graph.
 # Documentation
 
 The [API documentation](https://criteo.github.io/cuttle/api/index.html) is the main reference for Scala programmers.

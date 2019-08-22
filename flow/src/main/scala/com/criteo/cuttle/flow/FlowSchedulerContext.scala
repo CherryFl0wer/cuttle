@@ -12,7 +12,6 @@ import com.criteo.cuttle.flow.FlowSchedulerUtils.FlowJob
 import io.circe.generic.semiauto.deriveDecoder
 
 case class FlowSchedulerContext(start : Instant,
-                                projectVersion: String = "",
                                 workflowId : String) extends SchedulingContext {
 
   override def asJson: Json = FlowSchedulerContext.encoder(this)
@@ -22,7 +21,7 @@ case class FlowSchedulerContext(start : Instant,
   def toId: String = s"${start}-${workflowId}-${UUID.randomUUID().toString}"
 
   def compareTo(other: SchedulingContext) = other match {
-    case FlowSchedulerContext(timestamp, _, _) => start.compareTo(timestamp) // Priority compare
+    case FlowSchedulerContext(timestamp, _) => start.compareTo(timestamp) // Priority compare
   }
 
 }
@@ -41,8 +40,7 @@ object FlowSchedulerContext {
     override def apply(a: FlowSchedulerContext): Json = {
       Json.obj(
         "startAt" -> a.start.asJson,
-        "workflowId" -> a.workflowId.asJson,
-        "projectVersion" -> a.projectVersion.asJson
+        "workflowId" -> a.workflowId.asJson
       )
     }
   }

@@ -24,13 +24,25 @@ package object utils {
     */
   def transactor(config: DatabaseConfig): Resource[IO, HikariTransactor[IO]] = Database.newHikariTransactor(config)
 
+
+  private[cuttle] implicit val timer: cats.effect.Timer[IO] = {
+    val timerThreadPool = ThreadPools.newFixedThreadPool(1, poolName = Some("Timer"))
+    IO.timer(ExecutionContext.fromExecutorService(timerThreadPool))
+  }
+
+  // FIXME this method only exists because Scala couldn't resolve implicits in the context of Executor.scala
+  private[cuttle] def awakeEvery(duration: FiniteDuration): fs2.Stream[IO, FiniteDuration] =
+    fs2.Stream.awakeEvery[IO](duration)
+
+
   /** Executes unapplied schema evolutions
     *
     * @param table Name of the table that keeps track of applied schema changes
     * @param schemaEvolutions List of schema evolutions (should be append-only)
     */
+
   def updateSchema(table: String, schemaEvolutions: List[ConnectionIO[_]]) =
-    (for {
+    for {
       _ <- Fragment.const(s"""
         CREATE TABLE IF NOT EXISTS ${table} (
           schema_version  SMALLINT NOT NULL,
@@ -50,17 +62,7 @@ package object utils {
               fr"VALUES(${i + 1}, ${Instant.now()})"
           evolutions *> evolution *> insertEvolutionQuery.update.run
       }
-    } yield ())
-
-  private[cuttle] implicit val timer: cats.effect.Timer[IO] = {
-    val timerThreadPool = ThreadPools.newFixedThreadPool(1, poolName = Some("Timer"))
-    IO.timer(ExecutionContext.fromExecutorService(timerThreadPool))
-  }
-
-  // FIXME this method only exists because Scala couldn't resolve implicits in the context of Executor.scala
-  private[cuttle] def awakeEvery(duration: FiniteDuration): fs2.Stream[IO, FiniteDuration] =
-    fs2.Stream.awakeEvery[IO](duration)
-
+    } yield ()
   /** Creates a  [[scala.concurrent.Future Future]] that resolve automatically
     * after the given duration.
     */
