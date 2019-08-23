@@ -248,22 +248,12 @@ Possible `Future[Completed]` for the job are :
 - `Fail` : Just fail the job
 
 
-###Examples and more
+### Examples and more
 
 See the folder `examples` or `tests` in `flow` module for more example.
 
 You can render the graph by installing graphviz `brew install graphviz`
 and then run the method `renderDot` from you `FlowWorkflow` object to get a png file of your graph.
-# Documentation
-
-The [API documentation](https://criteo.github.io/cuttle/api/index.html) is the main reference for Scala programmers.
-
-For a project example, you can also follow these hands-on introductions:
-- [A basic project using the built-in timeseries scheduler](https://criteo.github.io/cuttle/examples/examples0/HelloTimeSeries.scala.html).
-- [A minimal custom scheduling](https://criteo.github.io/cuttle/examples/examples0/HelloCustomScheduling.scala.html)
-
-To run the example application, checkout the repository, launch the [sbt](http://www.scala-sbt.org/) console in the project (_you will need [yarn](https://yarnpkg.com/en/) as well to compile the UI part_), and run the `example HelloWorld` command.
-
 # Usage
 
 The library is cross-built for __Scala 2.11__ and __Scala 2.12__.
